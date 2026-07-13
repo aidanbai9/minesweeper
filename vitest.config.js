@@ -27,7 +27,8 @@ export default defineConfig({
               miniflare: {
                 compatibilityDate: "2025-09-06",
                 durableObjects: {
-                  GAME: { className: "GameRoom", useSQLite: true }
+                  GAME: { className: "GameRoom", useSQLite: true },
+                  LEADERBOARD: { className: "Leaderboard", useSQLite: true }
                 }
               }
             }

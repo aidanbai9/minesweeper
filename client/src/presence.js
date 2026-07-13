@@ -64,16 +64,21 @@ export function createPresence(cells, peerListEl) {
   function renderPeerList(youId) {
     const ordered = [...peers.values()].sort((a, b) => a.playerId - b.playerId);
     peerListEl.hidden = ordered.length < 2;
-    peerListEl.innerHTML = ordered
-      .map(
-        (peer) => `
-          <span class="peer ${peer.playerId === youId ? "you" : ""}">
-            <span class="peer-dot" style="background:${colorFor(peer.playerId)}"></span>
-            <span>${peer.name}</span>
-          </span>
-        `
-      )
-      .join("");
+    peerListEl.replaceChildren();
+    for (const peer of ordered) {
+      const item = document.createElement("span");
+      item.className = `peer${peer.playerId === youId ? " you" : ""}`;
+
+      const dot = document.createElement("span");
+      dot.className = "peer-dot";
+      dot.style.background = colorFor(peer.playerId);
+
+      const name = document.createElement("span");
+      name.textContent = peer.name;
+
+      item.append(dot, name);
+      peerListEl.append(item);
+    }
   }
 
   return {

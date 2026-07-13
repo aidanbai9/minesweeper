@@ -122,8 +122,43 @@ function playingState(board) {
     revealedCount: 0,
     startedAt: 1,
     endedAt: 0,
-    lostAt: -1
+    lostAt: -1,
+    assistTainted: false,
+    contributors: []
   };
+}
+
+async function leaderboardEntries(preset) {
+  const stub = env.LEADERBOARD.getByName("global");
+  return (
+    (await runInDurableObject(stub, async (_instance, state) => state.storage.get(`lb:${preset}`))) || []
+  );
+}
+
+function presetWinState({ w, h, mineCount, mineStart = 0, startedAt = 1000 }) {
+  const mines = Array.from({ length: mineCount }, (_, i) => mineStart + i);
+  const board = manualBoard(w, h, mines);
+  const state = playingState(board);
+  state.startedAt = startedAt;
+  let lastSafe = -1;
+  for (let idx = 0; idx < w * h; idx += 1) {
+    if (board.mines[idx]) {
+      continue;
+    }
+    lastSafe = idx;
+  }
+  for (let idx = 0; idx < w * h; idx += 1) {
+    if (!board.mines[idx] && idx !== lastSafe) {
+      state.revealed[idx] = 1;
+      state.revealedCount += 1;
+    }
+  }
+  return { state, lastSafe, firstMine: mines[0] };
+}
+
+async function setName(socket, name) {
+  socket.send({ t: "HELLO", name });
+  await socket.next((message) => message.t === "PEER_JOIN" && message.peer?.name === name);
 }
 
 async function replaceRoomState(code, state) {
@@ -147,6 +182,20 @@ describe("state serialization", () => {
     expect(hydrated.board.mines).toBeInstanceOf(Uint8Array);
     expect(Array.from(hydrated.revealed)).toEqual(Array.from(state.revealed));
     expect(Array.from(hydrated.board.counts)).toEqual(Array.from(state.board.counts));
+  });
+
+  it("round-trips assist taint and contributors", () => {
+    const state = createGame({ seed: "tainted", w: 9, h: 9, mineCount: 10 });
+    state.assistTainted = true;
+    state.contributors = [
+      { playerId: 0, name: "Ada" },
+      { playerId: 2, name: "Ben" }
+    ];
+
+    const hydrated = deserializeState(serializeState(state));
+
+    expect(hydrated.assistTainted).toBe(true);
+    expect(hydrated.contributors).toEqual(state.contributors);
   });
 });
 
@@ -447,6 +496,116 @@ describe("GameRoom", () => {
 
     expect(events.events.some((event) => event.t === "OPEN")).toBe(true);
     expect(frameHasMines(events)).toBe(false);
+
+    a.close();
+  });
+
+  it("records an expert win with only actual contributors in first-contribution order", async () => {
+    const code = "rankwin2";
+    const a = await connect(code, "?seed=rank&w=30&h=16&m=99");
+    const b = await connect(code);
+    const watcher = await connect(code);
+    await a.next((message) => message.t === "SNAPSHOT");
+    await b.next((message) => message.t === "SNAPSHOT");
+    await watcher.next((message) => message.t === "SNAPSHOT");
+    await setName(a, "Ada");
+    await setName(b, "Ben");
+    await setName(watcher, "Watcher");
+
+    const { state, lastSafe, firstMine } = presetWinState({ w: 30, h: 16, mineCount: 99 });
+    await replaceRoomState(code, state);
+
+    a.send({ t: "ACTION", action: { type: "FLAG", idx: firstMine } });
+    await a.next((message) => message.t === "EVENTS");
+    await b.next((message) => message.t === "EVENTS");
+    a.close();
+    await delay(20);
+
+    b.send({ t: "ACTION", action: { type: "REVEAL", idx: lastSafe } });
+    const winFrame = await b.next((message) => message.t === "EVENTS" && message.events.some((event) => event.t === "WIN"));
+    const recorded = await b.next((message) => message.t === "WIN_RECORDED");
+    const stored = await storedRoomState(code);
+    const entries = await leaderboardEntries("expert");
+
+    expect(winFrame.events.at(-1).t).toBe("WIN");
+    expect(recorded.rank).toBe(1);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].timeMs).toBe(stored.endedAt - stored.startedAt);
+    expect(entries[0].players).toEqual(["Ada", "Ben"]);
+    expect(entries[0].players).not.toContain("Watcher");
+
+    b.close();
+    watcher.close();
+  });
+
+  it("does not record a win after assist was enabled at any point", async () => {
+    const code = "assist25";
+    const a = await connect(code, "?seed=assisttaint&w=30&h=16&m=99");
+    const b = await connect(code);
+    await a.next((message) => message.t === "SNAPSHOT");
+    await b.next((message) => message.t === "SNAPSHOT");
+    await setName(a, "Ada");
+    await setName(b, "Ben");
+
+    const { state, lastSafe } = presetWinState({ w: 30, h: 16, mineCount: 99 });
+    await replaceRoomState(code, state);
+
+    a.send({
+      t: "ACTION",
+      seq: 7,
+      action: { type: "CHORD", idx: 0, assist: { autoChord: true, autoFlag: false } }
+    });
+    const ack = await a.next((message) => message.t === "EVENTS" && message.seq === 7);
+    expect(ack.events).toEqual([]);
+    expect((await storedRoomState(code)).assistTainted).toBe(true);
+
+    b.send({ t: "ACTION", action: { type: "REVEAL", idx: lastSafe } });
+    await b.next((message) => message.t === "EVENTS" && message.events.some((event) => event.t === "WIN"));
+    const ineligible = await b.next((message) => message.t === "WIN_INELIGIBLE");
+
+    expect(ineligible.reason).toBe("assist");
+    expect(await leaderboardEntries("expert")).toEqual([]);
+
+    a.close();
+    b.close();
+  });
+
+  it("does not record a custom-board win", async () => {
+    const code = "custom25";
+    const a = await connect(code, "?seed=custom&w=10&h=10&m=15");
+    await a.next((message) => message.t === "SNAPSHOT");
+    await setName(a, "Custom");
+
+    const { state, lastSafe } = presetWinState({ w: 10, h: 10, mineCount: 15 });
+    await replaceRoomState(code, state);
+
+    a.send({ t: "ACTION", action: { type: "REVEAL", idx: lastSafe } });
+    await a.next((message) => message.t === "EVENTS" && message.events.some((event) => event.t === "WIN"));
+    const ineligible = await a.next((message) => message.t === "WIN_INELIGIBLE");
+
+    expect(ineligible.reason).toBe("custom");
+    expect(await leaderboardEntries("beginner")).toEqual([]);
+    expect(await leaderboardEntries("expert")).toEqual([]);
+
+    a.close();
+  });
+
+  it("does not record losses", async () => {
+    const code = "lossrec2";
+    const a = await connect(code, "?seed=loss&w=30&h=16&m=99");
+    await a.next((message) => message.t === "SNAPSHOT");
+    await setName(a, "Loser");
+
+    const { state, firstMine } = presetWinState({ w: 30, h: 16, mineCount: 99 });
+    state.revealed.fill(0);
+    state.revealedCount = 0;
+    await replaceRoomState(code, state);
+
+    a.send({ t: "ACTION", action: { type: "REVEAL", idx: firstMine } });
+    await a.next((message) => message.t === "EVENTS" && message.events.some((event) => event.t === "BOOM"));
+
+    expect(await a.noMessage((message) => message.t === "WIN_RECORDED" || message.t === "WIN_INELIGIBLE")).toBe(true);
+    expect(await leaderboardEntries("expert")).toEqual([]);
 
     a.close();
   });

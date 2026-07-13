@@ -3,14 +3,18 @@ import { createLocalTransport } from "./local.js";
 import { createNetTransport } from "./net.js";
 import { setupInput } from "./input.js";
 import { mountGame, stateFromSnapshot } from "./render.js";
+import { HTTP_BASE } from "./config.js";
 
 const root = document.querySelector("#app");
 const STORAGE_KEY = "minesweeper:last-config";
 const PREFS_STORAGE_KEY = "minesweeper:prefs";
+const LAST_NAME_KEY = "minesweeper:lastName";
+const SESSION_NAME_KEY = "minesweeper:sessionName";
 const ROOM_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
 let activeTransport = null;
 let activeCleanup = null;
 let prefs = loadPrefs();
+let bootToken = 0;
 
 function randomSeed() {
   const bytes = new Uint8Array(12);
@@ -54,6 +58,67 @@ function storedConfig() {
 
 function saveConfig(config) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({ w: config.w, h: config.h, mineCount: config.mineCount }));
+}
+
+function cleanName(name) {
+  if (typeof name !== "string") {
+    return "";
+  }
+  return name
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 20);
+}
+
+function persistName(name) {
+  sessionStorage.setItem(SESSION_NAME_KEY, name);
+  localStorage.setItem(LAST_NAME_KEY, name);
+}
+
+function promptForOnlineName() {
+  const activeName = cleanName(sessionStorage.getItem(SESSION_NAME_KEY));
+  if (activeName) {
+    return Promise.resolve(activeName);
+  }
+
+  return new Promise((resolve) => {
+    root.innerHTML = `
+      <main class="menu">
+        <section class="menu-panel name-panel">
+          <h1>Player name</h1>
+          <form class="name-form">
+            <label>Name <input name="name" type="text" maxlength="20" autocomplete="nickname"></label>
+            <p class="name-error" hidden>Enter 1-20 characters.</p>
+            <button type="submit">Join room</button>
+          </form>
+        </section>
+      </main>
+    `;
+
+    const form = root.querySelector(".name-form");
+    const input = form.querySelector('[name="name"]');
+    const error = form.querySelector(".name-error");
+    input.value = localStorage.getItem(LAST_NAME_KEY) || "";
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const name = cleanName(input.value);
+      if (!name) {
+        error.hidden = false;
+        input.focus();
+        return;
+      }
+      persistName(name);
+      resolve(name);
+    });
+
+    input.addEventListener("input", () => {
+      error.hidden = true;
+    });
+    input.focus();
+    input.select();
+  });
 }
 
 function normalizePrefs(value = {}) {
@@ -112,6 +177,7 @@ function renderMenu() {
           <button data-preset="beginner">Beginner</button>
           <button data-preset="intermediate">Intermediate</button>
           <button data-preset="expert">Expert</button>
+          <button data-preset="zhenghua">Zhenghua</button>
         </div>
         <div class="custom-grid">
           <label>Width <input name="w" type="number" min="5" max="60" value="${last.w}"></label>
@@ -166,7 +232,15 @@ function renderMenu() {
   });
 }
 
-function bootTransport(transport) {
+async function fetchLeaderboard() {
+  const response = await fetch(`${HTTP_BASE}/leaderboard`, { mode: "cors" });
+  if (!response.ok) {
+    throw new Error("Leaderboard request failed");
+  }
+  return response.json();
+}
+
+function bootTransport(transport, options = {}) {
   activeCleanup?.();
   activeTransport?.close();
   activeTransport = transport;
@@ -185,6 +259,8 @@ function bootTransport(transport) {
     api = mountGame(root, state, {
       onReset: () => transport.reset(),
       prefs,
+      online: options.online === true,
+      onLeaderboardOpen: fetchLeaderboard,
       onPrefsChange: updatePrefs,
       onReconfig(config) {
         saveConfig(config);
@@ -215,18 +291,25 @@ function bootTransport(transport) {
   transport.on("notice", (text) => {
     api?.showNotice(text);
   });
+  transport.on("win_recorded", (outcome) => {
+    api?.setWinOutcome(outcome);
+  });
+  transport.on("win_ineligible", (outcome) => {
+    api?.setWinOutcome(outcome);
+  });
   transport.on("error", (error) => {
     console.warn("server error", error);
   });
   transport.connect();
 }
 
-function bootFromHash() {
+async function bootFromHash() {
+  const token = ++bootToken;
   const params = paramsFromHash();
   if (params.has("s")) {
     const config = configFromParams(params, true);
     saveConfig(config);
-    bootTransport(createLocalTransport(config));
+    bootTransport(createLocalTransport(config), { online: false });
     return;
   }
 
@@ -236,7 +319,11 @@ function bootFromHash() {
     if (config) {
       saveConfig(config);
     }
-    bootTransport(createNetTransport({ code, config: config || storedConfig() }));
+    const name = await promptForOnlineName();
+    if (token !== bootToken) {
+      return;
+    }
+    bootTransport(createNetTransport({ code, config: config || storedConfig(), name }), { online: true });
     return;
   }
 
@@ -244,8 +331,8 @@ function bootFromHash() {
 }
 
 window.addEventListener("hashchange", () => {
-  bootFromHash();
+  void bootFromHash();
 });
 
 applyPrefs();
-bootFromHash();
+void bootFromHash();

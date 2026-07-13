@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   AUTO_FLAG,
+  PRESETS,
   Status,
   applyAction,
+  assertConfig,
   createGame,
   floodOpen,
+  generateBoard,
   neighbors
 } from "../src/index.js";
 
@@ -36,7 +39,9 @@ function playingState(board) {
     revealedCount: 0,
     startedAt: 1,
     endedAt: 0,
-    lostAt: -1
+    lostAt: -1,
+    assistTainted: false,
+    contributors: []
   };
 }
 
@@ -46,7 +51,9 @@ function snapshotArrays(state) {
     flags: Array.from(state.flags),
     flagCount: state.flagCount,
     revealedCount: state.revealedCount,
-    status: state.status
+    status: state.status,
+    assistTainted: state.assistTainted,
+    contributors: state.contributors
   };
 }
 
@@ -254,6 +261,58 @@ describe("applyAction", () => {
     expect(state.board.counts[40]).toBe(0);
   });
 
+  it("keeps assist taint sticky until a new game is created", () => {
+    const game = createGame({ seed: "taint", w: 9, h: 9, mineCount: 10 });
+    expect(game.assistTainted).toBe(false);
+
+    const tainted = applyAction(game, {
+      type: "CHORD",
+      idx: 0,
+      playerId: 0,
+      now: 1,
+      assist: { autoChord: true, autoFlag: false }
+    });
+    expect(tainted.events).toEqual([]);
+    expect(tainted.state.assistTainted).toBe(true);
+    expect(game.assistTainted).toBe(false);
+
+    const clean = applyAction(tainted.state, { type: "FLAG", idx: 0, playerId: 0, now: 2 });
+    expect(clean.state.assistTainted).toBe(true);
+    expect(createGame({ seed: "reset", w: 9, h: 9, mineCount: 10 }).assistTainted).toBe(false);
+  });
+
+  it("adds contributors only for actions that produce board events", () => {
+    const board = manualBoard(5, 5, [6, 24]);
+    let state = playingState(board);
+
+    const noop = applyAction(state, { type: "CHORD", idx: 0, playerId: 2, playerName: "No Op", now: 1 });
+    expect(noop.events).toEqual([]);
+    expect(noop.state.contributors).toEqual([]);
+
+    state = applyAction(state, { type: "REVEAL", idx: 0, playerId: 0, playerName: "Ada", now: 2 }).state;
+    expect(state.contributors).toEqual([{ playerId: 0, name: "Ada" }]);
+
+    state = applyAction(state, { type: "FLAG", idx: 6, playerId: 1, playerName: "Ben", now: 3 }).state;
+    expect(state.contributors).toEqual([
+      { playerId: 0, name: "Ada" },
+      { playerId: 1, name: "Ben" }
+    ]);
+
+    state = applyAction(state, { type: "FLAG", idx: 24, playerId: 0, playerName: "Ada", now: 4 }).state;
+    expect(state.contributors).toEqual([
+      { playerId: 0, name: "Ada" },
+      { playerId: 1, name: "Ben" }
+    ]);
+  });
+
+  it("validates and generates the zhenghua preset", () => {
+    assertConfig(PRESETS.zhenghua);
+    const board = generateBoard("zhenghua", PRESETS.zhenghua.w, PRESETS.zhenghua.h, PRESETS.zhenghua.mineCount, 0);
+    expect(board.w * board.h).toBe(3306);
+    expect(board.mineCount).toBe(666);
+    expect(Array.from(board.mines).filter(Boolean)).toHaveLength(666);
+  });
+
   it("allows over-flagging so the mine counter can go negative", () => {
     let state = createGame({ seed: "flags", w: 5, h: 5, mineCount: 1 });
     state = applyAction(state, { type: "FLAG", idx: 0, playerId: 0, now: 1 }).state;
@@ -437,6 +496,7 @@ describe("applyAction", () => {
     const action = { type: "REVEAL", idx: 1, playerId: 0, now: 13 };
     const base = applyAction(state, { ...action, assist: { autoChord: false, autoFlag: false } });
     const expected = slowAssistFixpoint(base.state, { autoChord: true, autoFlag: true }, 0, 13);
+    expected.state.assistTainted = true;
     const actual = applyAction(state, { ...action, assist: { autoChord: true, autoFlag: true } });
 
     expect(snapshotArrays(actual.state)).toEqual(snapshotArrays(expected.state));

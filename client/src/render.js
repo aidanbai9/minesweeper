@@ -10,8 +10,10 @@ const PRESET_OPTIONS = [
   ["beginner", "Beginner"],
   ["intermediate", "Intermediate"],
   ["expert", "Expert"],
+  ["zhenghua", "Zhenghua"],
   ["custom", "Custom"]
 ];
+const LEADERBOARD_PRESETS = PRESET_OPTIONS.filter(([key]) => key !== "custom");
 
 function checked(value, expected) {
   return value === expected ? " checked" : "";
@@ -28,6 +30,24 @@ function presetForConfig(config) {
     }
   }
   return "custom";
+}
+
+function presetLabel(key) {
+  return PRESET_OPTIONS.find(([preset]) => preset === key)?.[1] || "Custom";
+}
+
+function formatPreciseMs(timeMs) {
+  return (Math.max(0, timeMs) / 1000).toFixed(2);
+}
+
+function formatRank(rank) {
+  const n = Number(rank);
+  if (!Number.isInteger(n) || n < 1) {
+    return "";
+  }
+  const teen = n % 100 >= 11 && n % 100 <= 13;
+  const suffix = teen ? "th" : { 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th";
+  return `${n}${suffix}`;
 }
 
 function settingsHtml(state, prefs) {
@@ -66,6 +86,7 @@ function settingsHtml(state, prefs) {
                 <span>Auto-flag</span>
               </label>
             </div>
+            <p class="assist-note">Assists disqualify the shared board from leaderboard ranking.</p>
           </fieldset>
         </section>
         <section class="settings-section">
@@ -96,6 +117,36 @@ function settingsHtml(state, prefs) {
           </div>
           <button class="apply-button" type="button" data-apply-reconfig>Apply / New game</button>
         </section>
+      </section>
+    </div>
+  `;
+}
+
+function resultHtml() {
+  return `
+    <div class="result-backdrop" hidden>
+      <section class="result-dialog" role="dialog" aria-modal="true" aria-label="game result">
+        <div class="settings-title-row">
+          <h2 data-result-title></h2>
+          <button class="result-close" type="button" data-result-close aria-label="close">&times;</button>
+        </div>
+        <p class="result-time" data-result-time></p>
+        <p class="result-rank" data-result-rank></p>
+      </section>
+    </div>
+  `;
+}
+
+function leaderboardHtml() {
+  return `
+    <div class="leaderboard-backdrop" hidden>
+      <section class="leaderboard-dialog" role="dialog" aria-modal="true" aria-label="leaderboard">
+        <div class="settings-title-row">
+          <h2>Leaderboard</h2>
+          <button class="leaderboard-close" type="button" data-leaderboard-close aria-label="close">&times;</button>
+        </div>
+        <div class="leaderboard-tabs" data-leaderboard-tabs></div>
+        <div class="leaderboard-body" data-leaderboard-body></div>
       </section>
     </div>
   `;
@@ -187,7 +238,9 @@ export function stateFromSnapshot(snapshot) {
     mines,
     wrongFlags,
     you: snapshot.you,
-    peers
+    peers,
+    winOutcome: null,
+    leaderboardPending: false
   };
 }
 
@@ -216,30 +269,47 @@ export function mountGame(root, initialState, handlers) {
       </section>
     </main>
     ${settingsHtml(state, prefs)}
+    ${resultHtml()}
+    ${leaderboardHtml()}
   `;
 
   const banner = root.querySelector(".reconnect-banner");
   const toastStack = root.querySelector(".toast-stack");
   const settingsBackdrop = root.querySelector(".settings-backdrop");
-  const chrome = createChrome(root.querySelector(".chrome"), { onReset: handlers.onReset, onSettings: openSettings });
+  const resultBackdrop = root.querySelector(".result-backdrop");
+  const leaderboardBackdrop = root.querySelector(".leaderboard-backdrop");
+  const chrome = createChrome(root.querySelector(".chrome"), {
+    onReset: handlers.onReset,
+    onLeaderboard: openLeaderboard,
+    onSettings: openSettings
+  });
   const board = root.querySelector(".board");
   const peerStrip = root.querySelector(".peer-strip");
   board.style.gridTemplateColumns = `repeat(${state.w}, var(--cell))`;
   board.style.gridTemplateRows = `repeat(${state.h}, var(--cell))`;
 
+  const cellFragment = document.createDocumentFragment();
   const cells = Array.from({ length: state.w * state.h }, (_, idx) => {
     const cell = document.createElement("div");
     cell.className = "cell unrevealed";
     cell.dataset.idx = String(idx);
     cell.setAttribute("role", "gridcell");
-    board.append(cell);
+    cellFragment.append(cell);
     return cell;
   });
+  board.append(cellFragment);
 
   const presence = createPresence(cells, peerStrip);
   presence.setPeers([...state.peers.values()].filter((peer) => peer.playerId !== state.you?.playerId), state.you);
 
   const settingsClose = settingsBackdrop.querySelector("[data-settings-close]");
+  const resultClose = resultBackdrop.querySelector("[data-result-close]");
+  const resultTitle = resultBackdrop.querySelector("[data-result-title]");
+  const resultTime = resultBackdrop.querySelector("[data-result-time]");
+  const resultRank = resultBackdrop.querySelector("[data-result-rank]");
+  const leaderboardClose = leaderboardBackdrop.querySelector("[data-leaderboard-close]");
+  const leaderboardTabs = leaderboardBackdrop.querySelector("[data-leaderboard-tabs]");
+  const leaderboardBody = leaderboardBackdrop.querySelector("[data-leaderboard-body]");
   const mineRange = settingsBackdrop.querySelector('[data-role="mine-range"]');
   const applyButton = settingsBackdrop.querySelector("[data-apply-reconfig]");
   const confirmRow = settingsBackdrop.querySelector('[data-role="confirm-reconfig"]');
@@ -247,6 +317,8 @@ export function mountGame(root, initialState, handlers) {
   const heightInput = settingsBackdrop.querySelector('[name="settings-h"]');
   const minesInput = settingsBackdrop.querySelector('[name="settings-m"]');
   let pendingConfig = null;
+  let activeLeaderboardPreset = presetForConfig(state) === "custom" ? "expert" : presetForConfig(state);
+  let leaderboardBoards = null;
 
   function setRadio(name, value) {
     const input = settingsBackdrop.querySelector(`input[name="${name}"][value="${value}"]`);
@@ -307,6 +379,130 @@ export function mountGame(root, initialState, handlers) {
   function closeSettings() {
     settingsBackdrop.hidden = true;
     clearConfirm();
+  }
+
+  function resultMessage() {
+    if (state.status !== STATUS.WON) {
+      return "";
+    }
+    const outcome = state.winOutcome;
+    if (outcome?.t === "WIN_RECORDED") {
+      if (outcome.rank) {
+        return `${formatRank(outcome.rank)} on ${presetLabel(presetForConfig(state))}!`;
+      }
+      return "Not ranked: outside the top 50.";
+    }
+    if (outcome?.t === "WIN_INELIGIBLE") {
+      return outcome.reason === "assist"
+        ? "Not ranked: assists were enabled on this shared board."
+        : "Not ranked: custom board.";
+    }
+    if (handlers.online && state.leaderboardPending) {
+      return "Checking leaderboard...";
+    }
+    return handlers.online ? "Leaderboard result unavailable." : "Offline game: no leaderboard.";
+  }
+
+  function renderResult() {
+    if (state.status !== STATUS.WON) {
+      return;
+    }
+    const timeMs = Math.max(0, (state.endedAt || Date.now()) - (state.startedAt || state.endedAt || Date.now()));
+    resultTitle.textContent = "Cleared";
+    resultTime.textContent = `Time ${formatPreciseMs(timeMs)} seconds`;
+    resultRank.textContent = resultMessage();
+  }
+
+  function showResult() {
+    renderResult();
+    resultBackdrop.hidden = false;
+    resultClose.focus();
+  }
+
+  function closeResult() {
+    resultBackdrop.hidden = true;
+  }
+
+  function renderLeaderboardLoading(text) {
+    leaderboardBody.replaceChildren();
+    const message = document.createElement("p");
+    message.className = "leaderboard-empty";
+    message.textContent = text;
+    leaderboardBody.append(message);
+  }
+
+  function renderLeaderboardTabs() {
+    leaderboardTabs.replaceChildren();
+    for (const [key, label] of LEADERBOARD_PRESETS) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.preset = key;
+      button.textContent = label;
+      button.className = key === activeLeaderboardPreset ? "active" : "";
+      leaderboardTabs.append(button);
+    }
+  }
+
+  function renderLeaderboardRows() {
+    renderLeaderboardTabs();
+    leaderboardBody.replaceChildren();
+    const entries = leaderboardBoards?.[activeLeaderboardPreset] || [];
+    if (entries.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "leaderboard-empty";
+      empty.textContent = "No ranked wins yet.";
+      leaderboardBody.append(empty);
+      return;
+    }
+
+    const table = document.createElement("table");
+    table.className = "leaderboard-table";
+    const thead = document.createElement("thead");
+    const header = document.createElement("tr");
+    for (const label of ["#", "Time", "Players", "Date"]) {
+      const th = document.createElement("th");
+      th.textContent = label;
+      header.append(th);
+    }
+    thead.append(header);
+    table.append(thead);
+
+    const tbody = document.createElement("tbody");
+    entries.forEach((entry, index) => {
+      const row = document.createElement("tr");
+      const cells = [
+        String(index + 1),
+        formatPreciseMs(entry.timeMs),
+        Array.isArray(entry.players) && entry.players.length > 0 ? entry.players.join(", ") : "Unknown",
+        entry.finishedAt ? new Date(entry.finishedAt).toLocaleDateString() : ""
+      ];
+      for (const value of cells) {
+        const td = document.createElement("td");
+        td.textContent = value;
+        row.append(td);
+      }
+      tbody.append(row);
+    });
+    table.append(tbody);
+    leaderboardBody.append(table);
+  }
+
+  async function openLeaderboard() {
+    activeLeaderboardPreset = presetForConfig(state) === "custom" ? activeLeaderboardPreset : presetForConfig(state);
+    leaderboardBackdrop.hidden = false;
+    leaderboardClose.focus();
+    renderLeaderboardTabs();
+    renderLeaderboardLoading("Loading...");
+    try {
+      leaderboardBoards = await handlers.onLeaderboardOpen?.();
+      renderLeaderboardRows();
+    } catch {
+      renderLeaderboardLoading("Unable to load leaderboard.");
+    }
+  }
+
+  function closeLeaderboard() {
+    leaderboardBackdrop.hidden = true;
   }
 
   function submitReconfig(config) {
@@ -372,10 +568,37 @@ export function mountGame(root, initialState, handlers) {
     }
   });
 
+  resultBackdrop.addEventListener("click", (event) => {
+    if (event.target === resultBackdrop || event.target.closest("[data-result-close]")) {
+      closeResult();
+    }
+  });
+
+  leaderboardBackdrop.addEventListener("click", (event) => {
+    if (event.target === leaderboardBackdrop || event.target.closest("[data-leaderboard-close]")) {
+      closeLeaderboard();
+      return;
+    }
+    const tab = event.target.closest("[data-preset]");
+    if (tab) {
+      activeLeaderboardPreset = tab.dataset.preset;
+      renderLeaderboardRows();
+    }
+  });
+
   function onWindowKeyDown(event) {
-    if (event.key === "Escape" && !settingsBackdrop.hidden) {
+    if (event.key !== "Escape") {
+      return;
+    }
+    if (!settingsBackdrop.hidden) {
       event.preventDefault();
       closeSettings();
+    } else if (!leaderboardBackdrop.hidden) {
+      event.preventDefault();
+      closeLeaderboard();
+    } else if (!resultBackdrop.hidden) {
+      event.preventDefault();
+      closeResult();
     }
   }
 
@@ -549,6 +772,7 @@ export function mountGame(root, initialState, handlers) {
     const frame = Array.isArray(message) ? { events: message } : message || { events: [] };
     const events = Array.isArray(frame.events) ? frame.events : [];
     const changed = new Set();
+    let wonThisFrame = false;
     for (const idx of clearPendingForSeq(frame.seq)) {
       changed.add(idx);
     }
@@ -584,6 +808,9 @@ export function mountGame(root, initialState, handlers) {
         state.endedAt = event.endedAt;
         state.mines = new Set(event.mines);
         state.flagCount = state.mineCount;
+        state.leaderboardPending = handlers.online === true;
+        state.winOutcome = null;
+        wonThisFrame = true;
         for (const idx of event.mines) {
           state.flags[idx] ||= AUTO_FLAG;
           changed.add(idx);
@@ -594,6 +821,9 @@ export function mountGame(root, initialState, handlers) {
       changed.add(idx);
     }
     updateCells(changed);
+    if (wonThisFrame) {
+      showResult();
+    }
   }
 
   function showNotice(text) {
@@ -667,6 +897,16 @@ export function mountGame(root, initialState, handlers) {
       banner.hidden = !show;
       if (show) {
         clearAllPending();
+      }
+    },
+    setWinOutcome(outcome) {
+      state.winOutcome = outcome;
+      state.leaderboardPending = false;
+      if (state.status === STATUS.WON) {
+        renderResult();
+        if (resultBackdrop.hidden) {
+          showResult();
+        }
       }
     },
     showNotice,

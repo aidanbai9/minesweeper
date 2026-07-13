@@ -3,7 +3,17 @@ import { assertConfig, normalizeConfig } from "../../engine/src/index.js";
 export const VERSION = 1;
 export const ACTION_TYPES = new Set(["REVEAL", "FLAG", "CHORD"]);
 export const CLIENT_TYPES = new Set(["HELLO", "ACTION", "CURSOR", "RESET", "RECONFIG"]);
-export const SERVER_TYPES = new Set(["SNAPSHOT", "EVENTS", "PEER_JOIN", "PEER_LEAVE", "CURSOR", "NOTICE", "ERROR"]);
+export const SERVER_TYPES = new Set([
+  "SNAPSHOT",
+  "EVENTS",
+  "PEER_JOIN",
+  "PEER_LEAVE",
+  "CURSOR",
+  "NOTICE",
+  "WIN_RECORDED",
+  "WIN_INELIGIBLE",
+  "ERROR"
+]);
 
 function isPlainObject(value) {
   return value && typeof value === "object" && !Array.isArray(value);
@@ -65,7 +75,11 @@ export function validateInbound(value, totalCells) {
     if (value.name !== undefined && typeof value.name !== "string") {
       return { ok: false, code: "bad_name", message: "Name must be a string" };
     }
-    return { ok: true, value: { v: VERSION, t: "HELLO", name: cleanName(value.name) } };
+    const name = cleanName(value.name);
+    if (value.name !== undefined && !name) {
+      return { ok: false, code: "bad_name", message: "Name must be 1-20 characters" };
+    }
+    return { ok: true, value: { v: VERSION, t: "HELLO", name } };
   }
 
   if (value.t === "RESET") {
@@ -141,7 +155,11 @@ export function cleanName(name) {
   if (typeof name !== "string") {
     return "";
   }
-  return name.trim().replace(/\s+/g, " ").slice(0, 24);
+  return name
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 20);
 }
 
 export function encode(message) {

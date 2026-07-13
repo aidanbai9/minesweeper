@@ -13,3 +13,4 @@ function normalizeWsBase(value) {
 }
 
 export const WS_BASE = normalizeWsBase(window.__WS_BASE__);
+export const HTTP_BASE = WS_BASE.replace(/^wss:/, "https:").replace(/^ws:/, "http:");

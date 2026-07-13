@@ -1,7 +1,8 @@
 import { GameRoom } from "./GameRoom.js";
+import { Leaderboard } from "./Leaderboard.js";
 import { isValidRoomCode } from "./ids.js";
 
-export { GameRoom };
+export { GameRoom, Leaderboard };
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -11,6 +12,17 @@ const CORS = {
 
 function text(body, status = 200) {
   return new Response(body, { status, headers: CORS });
+}
+
+function json(body, status = 200, extraHeaders = {}) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      ...CORS,
+      "Content-Type": "application/json",
+      ...extraHeaders
+    }
+  });
 }
 
 export default {
@@ -23,6 +35,11 @@ export default {
 
     if (request.method === "GET" && url.pathname === "/health") {
       return text("ok");
+    }
+
+    if (request.method === "GET" && url.pathname === "/leaderboard") {
+      const boards = await env.LEADERBOARD.getByName("global").getBoards();
+      return json(boards, 200, { "Cache-Control": "public, max-age=30" });
     }
 
     const match = /^\/room\/([^/]+)$/.exec(url.pathname);

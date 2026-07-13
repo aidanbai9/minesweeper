@@ -1,16 +1,18 @@
 import { DurableObject } from "cloudflare:workers";
-import { applyAction, createGame, normalizeConfig, Status } from "../../engine/src/index.js";
+import { PRESETS, applyAction, createGame, normalizeConfig, Status } from "../../engine/src/index.js";
 import { cleanName, encode, errorMessage, parseJsonMessage, validateInbound } from "./protocol.js";
 
 const COLORS = ["#0000ff", "#008000", "#800080", "#008080", "#800000", "#000080", "#808000", "#ff7f00"];
 const MAX_PLAYERS = 8;
 const GC_AFTER_MS = 2 * 60 * 60 * 1000;
 const RATE_LIMIT_PER_SEC = 20;
+const WIN_INELIGIBLE_REASONS = Object.freeze({ ASSIST: "assist", CUSTOM: "custom" });
 
 function arraysToState(data) {
   if (!data) {
     return null;
   }
+  const fallbackPlayerId = (value) => (Number.isInteger(value) && value >= 0 ? value : 0);
   return {
     ...data,
     board: data.board
@@ -21,7 +23,17 @@ function arraysToState(data) {
         }
       : null,
     revealed: Uint8Array.from(data.revealed),
-    flags: Uint8Array.from(data.flags)
+    flags: Uint8Array.from(data.flags),
+    assistTainted: data.assistTainted === true,
+    contributors: Array.isArray(data.contributors)
+      ? data.contributors.map((contributor) => {
+          const playerId = fallbackPlayerId(contributor.playerId);
+          return {
+            playerId,
+            name: cleanName(contributor.name) || `Player ${playerId + 1}`
+          };
+        })
+      : []
   };
 }
 
@@ -114,7 +126,25 @@ function rateAllowed(attachment, now) {
   return true;
 }
 
+function presetKeyForConfig(config) {
+  for (const [key, preset] of Object.entries(PRESETS)) {
+    if (preset.w === config.w && preset.h === config.h && preset.mineCount === config.mineCount) {
+      return key;
+    }
+  }
+  return "";
+}
+
+function hasWinEvent(events) {
+  return events.some((event) => event.t === "WIN");
+}
+
 export class GameRoom extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.env = env;
+  }
+
   async fetch(request) {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
       return new Response("websocket upgrade required", { status: 426 });
@@ -218,18 +248,27 @@ export class GameRoom extends DurableObject {
       idx: message.action.idx,
       assist: message.action.assist,
       playerId: attachment.playerId,
+      playerName: attachment.name,
       now
     });
 
     if (result.events.length === 0) {
+      if (result.state !== state) {
+        await this.saveState(result.state);
+        await this.bumpAlarm(now);
+      }
       this.send(ws, { t: "EVENTS", seq: message.seq, events: [] });
       return;
     }
 
+    const winOutcome = hasWinEvent(result.events) ? await this.winOutcome(result.state) : null;
     await this.saveState(result.state);
     await this.bumpAlarm(now);
     this.send(ws, { t: "EVENTS", seq: message.seq, events: result.events });
     this.broadcast({ t: "EVENTS", events: result.events }, ws);
+    if (winOutcome) {
+      this.broadcast(winOutcome);
+    }
   }
 
   async webSocketClose(ws) {
@@ -308,6 +347,29 @@ export class GameRoom extends DurableObject {
 
   async bumpAlarm(now) {
     await this.ctx.storage.setAlarm(now + GC_AFTER_MS);
+  }
+
+  async winOutcome(state) {
+    if (state.status !== Status.WON) {
+      return null;
+    }
+    if (state.assistTainted) {
+      return { t: "WIN_INELIGIBLE", reason: WIN_INELIGIBLE_REASONS.ASSIST };
+    }
+
+    const preset = presetKeyForConfig(state);
+    if (!preset) {
+      return { t: "WIN_INELIGIBLE", reason: WIN_INELIGIBLE_REASONS.CUSTOM };
+    }
+
+    const entry = {
+      timeMs: Math.max(0, Math.trunc(state.endedAt - state.startedAt)),
+      players: (state.contributors || []).map((contributor) => contributor.name),
+      preset,
+      finishedAt: state.endedAt
+    };
+    const rank = await this.env.LEADERBOARD.getByName("global").recordWin(entry);
+    return { t: "WIN_RECORDED", rank };
   }
 
   peers(except = null, excludePlayerId = null) {

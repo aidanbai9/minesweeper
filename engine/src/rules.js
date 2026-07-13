@@ -7,7 +7,8 @@ export const AUTO_FLAG = 255;
 export const PRESETS = Object.freeze({
   beginner: Object.freeze({ w: 9, h: 9, mineCount: 10 }),
   intermediate: Object.freeze({ w: 16, h: 16, mineCount: 40 }),
-  expert: Object.freeze({ w: 30, h: 16, mineCount: 99 })
+  expert: Object.freeze({ w: 30, h: 16, mineCount: 99 }),
+  zhenghua: Object.freeze({ w: 57, h: 58, mineCount: 666 })
 });
 
 export function clampInt(value, min, max) {
@@ -44,7 +45,8 @@ function cloneState(state) {
     ...state,
     board: state.board,
     revealed: new Uint8Array(state.revealed),
-    flags: new Uint8Array(state.flags)
+    flags: new Uint8Array(state.flags),
+    contributors: (state.contributors || []).map((contributor) => ({ ...contributor }))
   };
 }
 
@@ -82,6 +84,17 @@ function openCells(next, opened) {
 
 function assistEnabled(assist) {
   return Boolean(assist?.autoChord || assist?.autoFlag);
+}
+
+function addContributor(next, playerId, name) {
+  const contributors = next.contributors || (next.contributors = []);
+  if (contributors.some((contributor) => contributor.playerId === playerId)) {
+    return;
+  }
+  contributors.push({
+    playerId,
+    name: typeof name === "string" && name ? name : `Player ${playerId + 1}`
+  });
 }
 
 function finishIfWon(next, now) {
@@ -298,7 +311,9 @@ export function createGame(config) {
     revealedCount: 0,
     startedAt: 0,
     endedAt: 0,
-    lostAt: -1
+    lostAt: -1,
+    assistTainted: false,
+    contributors: []
   };
 }
 
@@ -389,23 +404,35 @@ export function applyAction(state, action) {
   const idx = action?.idx;
   const now = Number(action?.now ?? 0);
   const playerId = Number.isInteger(action?.playerId) && action.playerId >= 0 ? action.playerId : 0;
+  const playerName = typeof action?.playerName === "string" ? action.playerName : "";
 
   if (state.status === Status.WON || state.status === Status.LOST) {
     return { state, events: [] };
   }
 
-  let result;
-  if (action?.type === "FLAG") {
-    result = applyFlagAction(state, idx, playerId);
-  } else if (action?.type === "REVEAL") {
-    result = applyRevealAction(state, idx, playerId, now);
-  } else if (action?.type === "CHORD") {
-    result = applyChordAction(state, idx, now);
-  } else {
-    return { state, events: [] };
+  const enabledAssist = assistEnabled(action?.assist);
+  let inputState = state;
+  if (enabledAssist && !state.assistTainted) {
+    inputState = cloneState(state);
+    inputState.assistTainted = true;
   }
 
-  if (result.events.length === 0 || result.state.status !== Status.PLAYING || !assistEnabled(action?.assist)) {
+  let result;
+  if (action?.type === "FLAG") {
+    result = applyFlagAction(inputState, idx, playerId);
+  } else if (action?.type === "REVEAL") {
+    result = applyRevealAction(inputState, idx, playerId, now);
+  } else if (action?.type === "CHORD") {
+    result = applyChordAction(inputState, idx, now);
+  } else {
+    return { state: inputState, events: [] };
+  }
+
+  if (result.events.length > 0) {
+    addContributor(result.state, playerId, playerName);
+  }
+
+  if (result.events.length === 0 || result.state.status !== Status.PLAYING || !enabledAssist) {
     return { state: result.state, events: result.events };
   }
 

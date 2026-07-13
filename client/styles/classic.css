@@ -100,12 +100,17 @@ input {
 .preset-row button,
 .action-row button,
 .face,
+.leaderboard-button,
 .settings-button,
 .settings-close,
+.result-close,
+.leaderboard-close,
+.leaderboard-tabs button,
 .segmented span,
 .settings-preset-row span,
 .apply-button,
-.confirm-row button {
+.confirm-row button,
+.name-form button {
   background: #c0c0c0;
   border-top: var(--bevel) solid #ffffff;
   border-left: var(--bevel) solid #ffffff;
@@ -116,7 +121,9 @@ input {
 .preset-row button,
 .action-row button,
 .apply-button,
-.confirm-row button {
+.confirm-row button,
+.leaderboard-tabs button,
+.name-form button {
   min-height: var(--button-min-h);
   padding: var(--button-pad-y) var(--button-pad-x);
 }
@@ -124,10 +131,15 @@ input {
 .preset-row button:active,
 .action-row button:active,
 .face:active,
+.leaderboard-button:active,
 .settings-button:active,
 .settings-close:active,
+.result-close:active,
+.leaderboard-close:active,
 .apply-button:active,
 .confirm-row button:active,
+.name-form button:active,
+.leaderboard-tabs button.active,
 .segmented input:checked + span,
 .settings-preset-row input:checked + span {
   border-top-color: #7b7b7b;
@@ -158,7 +170,7 @@ input {
 
 .top {
   display: grid;
-  grid-template-columns: auto 1fr auto auto;
+  grid-template-columns: auto 1fr auto auto auto;
   align-items: center;
   gap: var(--gap);
   padding: var(--header-pad);
@@ -180,13 +192,22 @@ input {
   font-size: var(--text);
 }
 
+.leaderboard-button,
 .settings-button,
-.settings-close {
+.settings-close,
+.result-close,
+.leaderboard-close {
   width: var(--tool-button);
   height: var(--tool-button);
   padding: 0;
   line-height: 1;
   font-weight: 700;
+}
+
+.leaderboard-button {
+  width: auto;
+  min-width: calc(30px * var(--scale));
+  font-size: calc(10px * var(--scale));
 }
 
 .board-frame {
@@ -366,7 +387,9 @@ input {
   display: none;
 }
 
-.settings-dialog {
+.settings-dialog,
+.result-dialog,
+.leaderboard-dialog {
   width: min(var(--settings-width), calc(100vw - var(--dialog-margin)));
   max-height: calc(100vh - var(--dialog-margin));
   overflow: auto;
@@ -376,6 +399,14 @@ input {
   border-right: var(--panel-bevel) solid #7b7b7b;
   border-bottom: var(--panel-bevel) solid #7b7b7b;
   padding: var(--panel-pad);
+}
+
+.result-dialog {
+  width: min(calc(320px * var(--scale)), calc(100vw - var(--dialog-margin)));
+}
+
+.leaderboard-dialog {
+  width: min(calc(620px * var(--scale)), calc(100vw - var(--dialog-margin)));
 }
 
 .settings-title-row {
@@ -416,6 +447,18 @@ input {
 .settings-section legend {
   margin-bottom: var(--small-gap);
   font-weight: 700;
+}
+
+.assist-note,
+.result-time,
+.result-rank,
+.leaderboard-empty,
+.name-error {
+  margin: 0;
+}
+
+.assist-note {
+  margin-top: var(--small-gap);
 }
 
 .segmented,
@@ -467,6 +510,97 @@ input {
 
 .apply-button:disabled {
   color: #7b7b7b;
+}
+
+.result-backdrop,
+.leaderboard-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 25;
+  display: grid;
+  place-items: center;
+  padding: var(--shell-pad);
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.result-backdrop[hidden],
+.leaderboard-backdrop[hidden] {
+  display: none;
+}
+
+.leaderboard-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--small-gap);
+  margin-bottom: var(--gap);
+}
+
+.leaderboard-body {
+  border-top: var(--bevel) solid #7b7b7b;
+  border-left: var(--bevel) solid #7b7b7b;
+  border-right: var(--bevel) solid #ffffff;
+  border-bottom: var(--bevel) solid #ffffff;
+  background: #ffffff;
+  color: #000000;
+  overflow: auto;
+  max-height: min(calc(420px * var(--scale)), calc(100vh - calc(160px * var(--scale))));
+}
+
+.leaderboard-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.leaderboard-table th,
+.leaderboard-table td {
+  padding: var(--small-gap);
+  text-align: left;
+  border-bottom: var(--thin-bevel) solid #c0c0c0;
+  vertical-align: top;
+}
+
+.leaderboard-table th:first-child,
+.leaderboard-table td:first-child {
+  width: calc(34px * var(--scale));
+}
+
+.leaderboard-table th:nth-child(2),
+.leaderboard-table td:nth-child(2) {
+  width: calc(76px * var(--scale));
+}
+
+.leaderboard-table th:nth-child(4),
+.leaderboard-table td:nth-child(4) {
+  width: calc(96px * var(--scale));
+}
+
+.leaderboard-empty {
+  padding: var(--gap);
+}
+
+.name-panel {
+  max-width: min(var(--menu-panel-width), 100%);
+}
+
+.name-form {
+  display: grid;
+  gap: var(--gap);
+}
+
+.name-form label {
+  display: grid;
+  gap: var(--tiny-gap);
+}
+
+.name-form input {
+  width: 100%;
+  border: var(--bevel) inset #c0c0c0;
+  padding: var(--led-pad-y) var(--tiny-gap);
+}
+
+.name-error {
+  color: #800000;
+  font-weight: 700;
 }
 
 @media (max-width: 35rem) {

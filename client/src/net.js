@@ -79,6 +79,10 @@ export function createNetTransport({ code, config, name = "Player" }) {
         emitter.emit("cursor", { playerId: message.playerId, idx: message.idx });
       } else if (message.t === "NOTICE") {
         emitter.emit("notice", message.text);
+      } else if (message.t === "WIN_RECORDED") {
+        emitter.emit("win_recorded", { t: message.t, rank: message.rank });
+      } else if (message.t === "WIN_INELIGIBLE") {
+        emitter.emit("win_ineligible", { t: message.t, reason: message.reason });
       } else if (message.t === "ERROR") {
         emitter.emit("error", message);
       }

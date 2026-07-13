@@ -47,14 +47,19 @@ export function createChrome(root, handlers = {}) {
     <div class="counter led" data-role="mines" aria-label="remaining mines"></div>
     <button class="face" type="button" aria-label="reset">:)</button>
     <div class="counter led" data-role="time" aria-label="elapsed seconds"></div>
+    <button class="leaderboard-button" type="button" aria-label="leaderboard">LB</button>
     <button class="settings-button" type="button" aria-label="settings">&#9881;</button>
   `;
   const mines = root.querySelector('[data-role="mines"]');
   const time = root.querySelector('[data-role="time"]');
   const face = root.querySelector(".face");
+  const leaderboard = root.querySelector(".leaderboard-button");
   const settings = root.querySelector(".settings-button");
   if (handlers.onReset) {
     face.addEventListener("click", handlers.onReset);
+  }
+  if (handlers.onLeaderboard) {
+    leaderboard.addEventListener("click", handlers.onLeaderboard);
   }
   if (handlers.onSettings) {
     settings.addEventListener("click", handlers.onSettings);

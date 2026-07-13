@@ -60,4 +60,6 @@ The `pages.yml` workflow syncs `engine/src/*.js` into `client/engine/` and deplo
 
 Online snapshots expose only dimensions, counts for revealed cells, flags, peers, and status. The server seed and mine array remain in Durable Object storage. The full mine list is sent only in terminal `BOOM` or `WIN` events.
 
+Leaderboard times use the server-owned clock and board state, but solver bots driving the WebSocket are not detected; preventing that would require accounts or input-timing analysis.
+
 Offline solo intentionally uses the seed in the URL and runs the same pure engine in-tab, so it has no server anti-cheat boundary.
