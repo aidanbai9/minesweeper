@@ -156,8 +156,8 @@ function presetWinState({ w, h, mineCount, mineStart = 0, startedAt = 1000 }) {
   return { state, lastSafe, firstMine: mines[0] };
 }
 
-async function setName(socket, name) {
-  socket.send({ t: "HELLO", name });
+async function setName(socket, name, token = "") {
+  socket.send(token ? { t: "HELLO", name, token } : { t: "HELLO", name });
   await socket.next((message) => message.t === "PEER_JOIN" && message.peer?.name === name);
 }
 
@@ -166,6 +166,20 @@ async function replaceRoomState(code, state) {
   await runInDurableObject(stub, async (_instance, durableState) => {
     await durableState.storage.put("state", serializeState(state));
   });
+}
+
+async function winBeginnerRoom({ code, name, token, startedAt = 1000 }) {
+  const socket = await connect(code, `?seed=${code}&w=9&h=9&m=10`);
+  await socket.next((message) => message.t === "SNAPSHOT");
+  await setName(socket, name, token);
+
+  const { state, lastSafe } = presetWinState({ w: 9, h: 9, mineCount: 10, startedAt });
+  await replaceRoomState(code, state);
+
+  socket.send({ t: "ACTION", action: { type: "REVEAL", idx: lastSafe } });
+  await socket.next((message) => message.t === "EVENTS" && message.events.some((event) => event.t === "WIN"));
+  await socket.next((message) => message.t === "WIN_RECORDED");
+  return socket;
 }
 
 describe("state serialization", () => {
@@ -188,8 +202,8 @@ describe("state serialization", () => {
     const state = createGame({ seed: "tainted", w: 9, h: 9, mineCount: 10 });
     state.assistTainted = true;
     state.contributors = [
-      { playerId: 0, name: "Ada" },
-      { playerId: 2, name: "Ben" }
+      { playerId: 0, name: "Ada", token: "tok-a" },
+      { playerId: 2, name: "Ben", token: "tok-b" }
     ];
 
     const hydrated = deserializeState(serializeState(state));
@@ -431,6 +445,41 @@ describe("GameRoom", () => {
     a.close();
   });
 
+  it("rejects invalid rename without changing the socket name or leaderboard", async () => {
+    const code = "badrenam";
+    const a = await connect(code, "?seed=badrename&w=9&h=9&m=10");
+    const b = await connect(code);
+    await a.next((message) => message.t === "SNAPSHOT");
+    await b.next((message) => message.t === "SNAPSHOT");
+    await setName(a, "Ada", "tok-badrename");
+    await setName(b, "Ben", "tok-benrename");
+
+    const lb = env.LEADERBOARD.getByName("global");
+    await lb.recordWin({
+      timeMs: 1000,
+      contributors: [{ name: "Ada", token: "tok-badrename" }],
+      preset: "beginner",
+      finishedAt: 100000
+    });
+    const before = await leaderboardEntries("beginner");
+
+    a.send({ t: "RENAME", name: " \u0000\t " });
+    const error = await a.next((message) => message.t === "ERROR");
+
+    expect(error.code).toBe("bad_name");
+    expect(await a.noMessage((message) => message.t === "PEER_RENAME")).toBe(true);
+    expect(await leaderboardEntries("beginner")).toEqual(before);
+
+    a.send({ t: "RECONFIG", config: { w: 16, h: 16, mineCount: 40 } });
+    await a.next((message) => message.t === "SNAPSHOT" && message.config.w === 16);
+    await b.next((message) => message.t === "SNAPSHOT" && message.config.w === 16);
+    const notice = await b.next((message) => message.t === "NOTICE");
+    expect(notice.text).toContain("Ada started");
+
+    a.close();
+    b.close();
+  });
+
   it("broadcasts one assisted cascade as one EVENTS frame", async () => {
     const code = "abcde24d";
     const a = await connect(code, "?seed=assist&w=5&h=5&m=1");
@@ -508,9 +557,9 @@ describe("GameRoom", () => {
     await a.next((message) => message.t === "SNAPSHOT");
     await b.next((message) => message.t === "SNAPSHOT");
     await watcher.next((message) => message.t === "SNAPSHOT");
-    await setName(a, "Ada");
-    await setName(b, "Ben");
-    await setName(watcher, "Watcher");
+    await setName(a, "Ada", "tok-a");
+    await setName(b, "Ben", "tok-b");
+    await setName(watcher, "Watcher", "tok-watcher");
 
     const { state, lastSafe, firstMine } = presetWinState({ w: 30, h: 16, mineCount: 99 });
     await replaceRoomState(code, state);
@@ -531,11 +580,81 @@ describe("GameRoom", () => {
     expect(recorded.rank).toBe(1);
     expect(entries).toHaveLength(1);
     expect(entries[0].timeMs).toBe(stored.endedAt - stored.startedAt);
-    expect(entries[0].players).toEqual(["Ada", "Ben"]);
-    expect(entries[0].players).not.toContain("Watcher");
+    expect(entries[0].contributors).toEqual([
+      { name: "Ada", token: "tok-a" },
+      { name: "Ben", token: "tok-b" }
+    ]);
+    expect(entries[0].contributors.map((contributor) => contributor.name)).not.toContain("Watcher");
 
     b.close();
     watcher.close();
+  });
+
+  it("records an online solo preset win with one contributor", async () => {
+    const a = await winBeginnerRoom({ code: "solorank", name: "Solo", token: "tok-solo" });
+    const entries = await leaderboardEntries("beginner");
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0].contributors).toEqual([{ name: "Solo", token: "tok-solo" }]);
+
+    a.close();
+  });
+
+  it("renames an in-progress contributor before recording the win", async () => {
+    const code = "rnmidgam";
+    const a = await connect(code, "?seed=renamegame&w=9&h=9&m=10");
+    await a.next((message) => message.t === "SNAPSHOT");
+    await setName(a, "Ada", "tok-midgame");
+
+    const { state, firstMine, lastSafe } = presetWinState({ w: 9, h: 9, mineCount: 10 });
+    await replaceRoomState(code, state);
+
+    a.send({ t: "ACTION", action: { type: "FLAG", idx: firstMine } });
+    await a.next((message) => message.t === "EVENTS");
+    expect((await storedRoomState(code)).contributors).toEqual([
+      { playerId: 0, name: "Ada", token: "tok-midgame" }
+    ]);
+
+    a.send({ t: "RENAME", name: "Ada Prime" });
+    const rename = await a.next((message) => message.t === "PEER_RENAME");
+    expect(rename).toMatchObject({ playerId: 0, name: "Ada Prime" });
+    expect((await storedRoomState(code)).contributors).toEqual([
+      { playerId: 0, name: "Ada Prime", token: "tok-midgame" }
+    ]);
+
+    a.send({ t: "ACTION", action: { type: "REVEAL", idx: lastSafe } });
+    await a.next((message) => message.t === "EVENTS" && message.events.some((event) => event.t === "WIN"));
+    await a.next((message) => message.t === "WIN_RECORDED");
+    const entries = await leaderboardEntries("beginner");
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0].contributors).toEqual([{ name: "Ada Prime", token: "tok-midgame" }]);
+
+    a.close();
+  });
+
+  it("renames prior entries for one session token without touching another identical name", async () => {
+    const first = await winBeginnerRoom({ code: "rnpriora", name: "aidan", token: "tok-same", startedAt: 1000 });
+    const second = await winBeginnerRoom({ code: "rnpriorb", name: "aidan", token: "tok-same", startedAt: 2000 });
+    const other = await winBeginnerRoom({ code: "rnpriorc", name: "aidan", token: "tok-other", startedAt: 3000 });
+    const before = await leaderboardEntries("beginner");
+    const beforeTiming = before.map((entry) => [entry.timeMs, entry.finishedAt]);
+
+    first.send({ t: "RENAME", name: "Aidan Prime" });
+    await first.next((message) => message.t === "PEER_RENAME" && message.name === "Aidan Prime");
+    const after = await leaderboardEntries("beginner");
+
+    expect(after.map((entry) => [entry.timeMs, entry.finishedAt])).toEqual(beforeTiming);
+    expect(
+      after
+        .filter((entry) => entry.contributors.some((contributor) => contributor.token === "tok-same"))
+        .map((entry) => entry.contributors[0].name)
+    ).toEqual(["Aidan Prime", "Aidan Prime"]);
+    expect(after.find((entry) => entry.contributors[0].token === "tok-other").contributors[0].name).toBe("aidan");
+
+    first.close();
+    second.close();
+    other.close();
   });
 
   it("does not record a win after assist was enabled at any point", async () => {

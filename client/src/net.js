@@ -28,7 +28,7 @@ function buildRoomUrl(code, config, includeConfig) {
   return url.toString();
 }
 
-export function createNetTransport({ code, config, name = "Player" }) {
+export function createNetTransport({ code, config, name = "Player", token = "" }) {
   const emitter = makeEmitter();
   let ws = null;
   let closed = false;
@@ -36,6 +36,8 @@ export function createNetTransport({ code, config, name = "Player" }) {
   let attempt = 0;
   let reconnectTimer = 0;
   let outbox = [];
+  let displayName = name;
+  let pendingRename = false;
 
   function emitConnection(reconnecting) {
     emitter.emit("connection", { reconnecting });
@@ -57,7 +59,11 @@ export function createNetTransport({ code, config, name = "Player" }) {
       attempt = 0;
       connectedOnce = true;
       emitConnection(false);
-      sendRaw({ t: "HELLO", name });
+      sendRaw({ t: "HELLO", name: displayName, token });
+      if (pendingRename) {
+        pendingRename = false;
+        sendRaw({ t: "RENAME", name: displayName });
+      }
       for (const message of outbox) {
         sendRaw(message);
       }
@@ -73,6 +79,8 @@ export function createNetTransport({ code, config, name = "Player" }) {
         emitter.emit("events", { seq: message.seq, events: message.events || [] });
       } else if (message.t === "PEER_JOIN") {
         emitter.emit("peer_join", message.peer);
+      } else if (message.t === "PEER_RENAME") {
+        emitter.emit("peer_rename", { playerId: message.playerId, name: message.name });
       } else if (message.t === "PEER_LEAVE") {
         emitter.emit("peer_leave", message.playerId);
       } else if (message.t === "CURSOR") {
@@ -132,6 +140,10 @@ export function createNetTransport({ code, config, name = "Player" }) {
     reconfig(config) {
       outbox = [];
       sendRaw({ t: "RECONFIG", config: { w: config.w, h: config.h, mineCount: config.mineCount } });
+    },
+    rename(name) {
+      displayName = name;
+      pendingRename = !sendRaw({ t: "RENAME", name });
     },
     close() {
       closed = true;

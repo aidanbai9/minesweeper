@@ -2,11 +2,12 @@ import { assertConfig, normalizeConfig } from "../../engine/src/index.js";
 
 export const VERSION = 1;
 export const ACTION_TYPES = new Set(["REVEAL", "FLAG", "CHORD"]);
-export const CLIENT_TYPES = new Set(["HELLO", "ACTION", "CURSOR", "RESET", "RECONFIG"]);
+export const CLIENT_TYPES = new Set(["HELLO", "ACTION", "CURSOR", "RESET", "RECONFIG", "RENAME"]);
 export const SERVER_TYPES = new Set([
   "SNAPSHOT",
   "EVENTS",
   "PEER_JOIN",
+  "PEER_RENAME",
   "PEER_LEAVE",
   "CURSOR",
   "NOTICE",
@@ -75,11 +76,25 @@ export function validateInbound(value, totalCells) {
     if (value.name !== undefined && typeof value.name !== "string") {
       return { ok: false, code: "bad_name", message: "Name must be a string" };
     }
+    if (value.token !== undefined && typeof value.token !== "string") {
+      return { ok: false, code: "bad_token", message: "Session token must be a string" };
+    }
     const name = cleanName(value.name);
     if (value.name !== undefined && !name) {
       return { ok: false, code: "bad_name", message: "Name must be 1-20 characters" };
     }
-    return { ok: true, value: { v: VERSION, t: "HELLO", name } };
+    return { ok: true, value: { v: VERSION, t: "HELLO", name, token: cleanToken(value.token) } };
+  }
+
+  if (value.t === "RENAME") {
+    if (typeof value.name !== "string") {
+      return { ok: false, code: "bad_name", message: "Name must be a string" };
+    }
+    const name = cleanName(value.name);
+    if (!name) {
+      return { ok: false, code: "bad_name", message: "Name must be 1-20 characters" };
+    }
+    return { ok: true, value: { v: VERSION, t: "RENAME", name } };
   }
 
   if (value.t === "RESET") {
@@ -160,6 +175,13 @@ export function cleanName(name) {
     .trim()
     .replace(/\s+/g, " ")
     .slice(0, 20);
+}
+
+export function cleanToken(token) {
+  if (typeof token !== "string") {
+    return "";
+  }
+  return token.replace(/[\u0000-\u001f\u007f-\u009f]/g, "").slice(0, 128);
 }
 
 export function encode(message) {

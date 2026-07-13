@@ -10,11 +10,13 @@ const STORAGE_KEY = "minesweeper:last-config";
 const PREFS_STORAGE_KEY = "minesweeper:prefs";
 const LAST_NAME_KEY = "minesweeper:lastName";
 const SESSION_NAME_KEY = "minesweeper:sessionName";
+const SESSION_TOKEN_KEY = "minesweeper:token";
 const ROOM_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
 let activeTransport = null;
 let activeCleanup = null;
 let prefs = loadPrefs();
 let bootToken = 0;
+const sessionToken = createSessionToken();
 
 function randomSeed() {
   const bytes = new Uint8Array(12);
@@ -30,6 +32,12 @@ function generateRoomCode(length = 10) {
     code += ROOM_ALPHABET[byte % ROOM_ALPHABET.length];
   }
   return code;
+}
+
+function createSessionToken() {
+  const token = crypto.randomUUID();
+  sessionStorage.setItem(SESSION_TOKEN_KEY, token);
+  return token;
 }
 
 function paramsFromHash() {
@@ -185,7 +193,8 @@ function renderMenu() {
           <label>Mines <input name="m" type="number" min="1" value="${last.mineCount}"></label>
         </div>
         <div class="action-row">
-          <button data-action="solo">Play solo</button>
+          <button data-action="solo">Play solo (ranked)</button>
+          <button data-action="offline">Play offline (UNRANKED)</button>
           <button data-action="together">Play together</button>
         </div>
       </section>
@@ -220,7 +229,11 @@ function renderMenu() {
     const config = currentConfig();
     saveConfig(config);
     const hash = new URLSearchParams();
-    hash.set(action === "solo" ? "s" : "r", action === "solo" ? randomSeed() : generateRoomCode());
+    if (action === "offline") {
+      hash.set("s", randomSeed());
+    } else {
+      hash.set("r", generateRoomCode());
+    }
     hash.set("w", config.w);
     hash.set("h", config.h);
     hash.set("m", config.mineCount);
@@ -262,6 +275,14 @@ function bootTransport(transport, options = {}) {
       online: options.online === true,
       onLeaderboardOpen: fetchLeaderboard,
       onPrefsChange: updatePrefs,
+      onRename(name) {
+        const cleaned = cleanName(name);
+        if (!cleaned) {
+          return;
+        }
+        persistName(cleaned);
+        transport.rename?.(cleaned);
+      },
       onReconfig(config) {
         saveConfig(config);
         transport.reconfig(config);
@@ -278,6 +299,9 @@ function bootTransport(transport, options = {}) {
   });
   transport.on("peer_join", (peer) => {
     api?.upsertPeer(peer);
+  });
+  transport.on("peer_rename", ({ playerId, name }) => {
+    api?.renamePeer(playerId, name);
   });
   transport.on("peer_leave", (playerId) => {
     api?.removePeer(playerId);
@@ -299,6 +323,7 @@ function bootTransport(transport, options = {}) {
   });
   transport.on("error", (error) => {
     console.warn("server error", error);
+    api?.showNotice(error.message || "Server rejected that change.");
   });
   transport.connect();
 }
@@ -323,7 +348,9 @@ async function bootFromHash() {
     if (token !== bootToken) {
       return;
     }
-    bootTransport(createNetTransport({ code, config: config || storedConfig(), name }), { online: true });
+    bootTransport(createNetTransport({ code, config: config || storedConfig(), name, token: sessionToken }), {
+      online: true
+    });
     return;
   }
 

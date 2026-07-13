@@ -110,7 +110,8 @@ input {
 .settings-preset-row span,
 .apply-button,
 .confirm-row button,
-.name-form button {
+.name-form button,
+.rename-form button {
   background: #c0c0c0;
   border-top: var(--bevel) solid #ffffff;
   border-left: var(--bevel) solid #ffffff;
@@ -123,7 +124,8 @@ input {
 .apply-button,
 .confirm-row button,
 .leaderboard-tabs button,
-.name-form button {
+.name-form button,
+.rename-form button {
   min-height: var(--button-min-h);
   padding: var(--button-pad-y) var(--button-pad-x);
 }
@@ -139,6 +141,7 @@ input {
 .apply-button:active,
 .confirm-row button:active,
 .name-form button:active,
+.rename-form button:active,
 .leaderboard-tabs button.active,
 .segmented input:checked + span,
 .settings-preset-row input:checked + span {
@@ -582,17 +585,20 @@ input {
   max-width: min(var(--menu-panel-width), 100%);
 }
 
-.name-form {
+.name-form,
+.rename-form {
   display: grid;
   gap: var(--gap);
 }
 
-.name-form label {
+.name-form label,
+.rename-form label {
   display: grid;
   gap: var(--tiny-gap);
 }
 
-.name-form input {
+.name-form input,
+.rename-form input {
   width: 100%;
   border: var(--bevel) inset #c0c0c0;
   padding: var(--led-pad-y) var(--tiny-gap);

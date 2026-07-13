@@ -86,14 +86,19 @@ function assistEnabled(assist) {
   return Boolean(assist?.autoChord || assist?.autoFlag);
 }
 
-function addContributor(next, playerId, name) {
+function addContributor(next, playerId, name, token) {
   const contributors = next.contributors || (next.contributors = []);
-  if (contributors.some((contributor) => contributor.playerId === playerId)) {
+  const existing = contributors.find((contributor) => contributor.playerId === playerId);
+  if (existing) {
+    if (!existing.token && token) {
+      existing.token = token;
+    }
     return;
   }
   contributors.push({
     playerId,
-    name: typeof name === "string" && name ? name : `Player ${playerId + 1}`
+    name: typeof name === "string" && name ? name : `Player ${playerId + 1}`,
+    token: typeof token === "string" ? token : ""
   });
 }
 
@@ -405,6 +410,7 @@ export function applyAction(state, action) {
   const now = Number(action?.now ?? 0);
   const playerId = Number.isInteger(action?.playerId) && action.playerId >= 0 ? action.playerId : 0;
   const playerName = typeof action?.playerName === "string" ? action.playerName : "";
+  const playerToken = typeof action?.playerToken === "string" ? action.playerToken : "";
 
   if (state.status === Status.WON || state.status === Status.LOST) {
     return { state, events: [] };
@@ -429,7 +435,7 @@ export function applyAction(state, action) {
   }
 
   if (result.events.length > 0) {
-    addContributor(result.state, playerId, playerName);
+    addContributor(result.state, playerId, playerName, playerToken);
   }
 
   if (result.events.length === 0 || result.state.status !== Status.PLAYING || !enabledAssist) {

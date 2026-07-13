@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { PRESETS, applyAction, createGame, normalizeConfig, Status } from "../../engine/src/index.js";
-import { cleanName, encode, errorMessage, parseJsonMessage, validateInbound } from "./protocol.js";
+import { cleanName, cleanToken, encode, errorMessage, parseJsonMessage, validateInbound } from "./protocol.js";
 
 const COLORS = ["#0000ff", "#008000", "#800080", "#008080", "#800000", "#000080", "#808000", "#ff7f00"];
 const MAX_PLAYERS = 8;
@@ -30,7 +30,8 @@ function arraysToState(data) {
           const playerId = fallbackPlayerId(contributor.playerId);
           return {
             playerId,
-            name: cleanName(contributor.name) || `Player ${playerId + 1}`
+            name: cleanName(contributor.name) || `Player ${playerId + 1}`,
+            token: cleanToken(contributor.token)
           };
         })
       : []
@@ -164,6 +165,7 @@ export class GameRoom extends DurableObject {
     const attachment = {
       playerId,
       name: `Player ${playerId + 1}`,
+      token: "",
       color: COLORS[playerId % COLORS.length],
       rate: { second: 0, count: 0 },
       cursor: -1
@@ -208,10 +210,15 @@ export class GameRoom extends DurableObject {
 
     const message = validation.value;
     if (message.t === "HELLO") {
+      if (message.token) {
+        attachment.token = message.token;
+      }
       if (message.name) {
-        attachment.name = cleanName(message.name) || attachment.name;
+        attachment.name = message.name;
         ws.serializeAttachment(attachment);
         this.broadcast({ t: "PEER_JOIN", peer: peerFromAttachment(attachment) });
+      } else if (message.token) {
+        ws.serializeAttachment(attachment);
       }
       return;
     }
@@ -222,6 +229,11 @@ export class GameRoom extends DurableObject {
       return;
     }
     ws.serializeAttachment(attachment);
+
+    if (message.t === "RENAME") {
+      await this.renamePlayer(ws, attachment, state, message.name, now);
+      return;
+    }
 
     if (message.t === "CURSOR") {
       attachment.cursor = message.idx;
@@ -249,6 +261,7 @@ export class GameRoom extends DurableObject {
       assist: message.action.assist,
       playerId: attachment.playerId,
       playerName: attachment.name,
+      playerToken: attachment.token,
       now
     });
 
@@ -364,12 +377,44 @@ export class GameRoom extends DurableObject {
 
     const entry = {
       timeMs: Math.max(0, Math.trunc(state.endedAt - state.startedAt)),
-      players: (state.contributors || []).map((contributor) => contributor.name),
+      contributors: (state.contributors || []).map((contributor) => ({
+        name: contributor.name,
+        token: contributor.token
+      })),
       preset,
       finishedAt: state.endedAt
     };
     const rank = await this.env.LEADERBOARD.getByName("global").recordWin(entry);
     return { t: "WIN_RECORDED", rank };
+  }
+
+  async renamePlayer(ws, attachment, state, name, now) {
+    attachment.name = name;
+    ws.serializeAttachment(attachment);
+
+    let changedState = false;
+    if (state.status === Status.PLAYING && Array.isArray(state.contributors)) {
+      for (const contributor of state.contributors) {
+        const sameToken = attachment.token && contributor.token === attachment.token;
+        const sameSocketPlayer = !contributor.token && contributor.playerId === attachment.playerId;
+        if (sameToken || sameSocketPlayer) {
+          contributor.name = name;
+          if (!contributor.token && attachment.token) {
+            contributor.token = attachment.token;
+          }
+          changedState = true;
+        }
+      }
+    }
+    if (changedState) {
+      await this.saveState(state);
+      await this.bumpAlarm(now);
+    }
+
+    this.broadcast({ t: "PEER_RENAME", playerId: attachment.playerId, name });
+    if (attachment.token) {
+      await this.env.LEADERBOARD.getByName("global").renameToken(attachment.token, name);
+    }
   }
 
   peers(except = null, excludePlayerId = null) {

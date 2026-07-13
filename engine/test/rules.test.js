@@ -289,19 +289,40 @@ describe("applyAction", () => {
     expect(noop.events).toEqual([]);
     expect(noop.state.contributors).toEqual([]);
 
-    state = applyAction(state, { type: "REVEAL", idx: 0, playerId: 0, playerName: "Ada", now: 2 }).state;
-    expect(state.contributors).toEqual([{ playerId: 0, name: "Ada" }]);
+    state = applyAction(state, {
+      type: "REVEAL",
+      idx: 0,
+      playerId: 0,
+      playerName: "Ada",
+      playerToken: "tok-a",
+      now: 2
+    }).state;
+    expect(state.contributors).toEqual([{ playerId: 0, name: "Ada", token: "tok-a" }]);
 
-    state = applyAction(state, { type: "FLAG", idx: 6, playerId: 1, playerName: "Ben", now: 3 }).state;
+    state = applyAction(state, {
+      type: "FLAG",
+      idx: 6,
+      playerId: 1,
+      playerName: "Ben",
+      playerToken: "tok-b",
+      now: 3
+    }).state;
     expect(state.contributors).toEqual([
-      { playerId: 0, name: "Ada" },
-      { playerId: 1, name: "Ben" }
+      { playerId: 0, name: "Ada", token: "tok-a" },
+      { playerId: 1, name: "Ben", token: "tok-b" }
     ]);
 
-    state = applyAction(state, { type: "FLAG", idx: 24, playerId: 0, playerName: "Ada", now: 4 }).state;
+    state = applyAction(state, {
+      type: "FLAG",
+      idx: 24,
+      playerId: 0,
+      playerName: "Ada",
+      playerToken: "tok-a",
+      now: 4
+    }).state;
     expect(state.contributors).toEqual([
-      { playerId: 0, name: "Ada" },
-      { playerId: 1, name: "Ben" }
+      { playerId: 0, name: "Ada", token: "tok-a" },
+      { playerId: 1, name: "Ben", token: "tok-b" }
     ]);
   });
 

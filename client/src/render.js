@@ -50,7 +50,18 @@ function formatRank(rank) {
   return `${n}${suffix}`;
 }
 
-function settingsHtml(state, prefs) {
+function cleanName(name) {
+  if (typeof name !== "string") {
+    return "";
+  }
+  return name
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 20);
+}
+
+function settingsHtml(state, prefs, options = {}) {
   const preset = presetForConfig(state);
   return `
     <div class="settings-backdrop" hidden>
@@ -74,6 +85,17 @@ function settingsHtml(state, prefs) {
               ).join("")}
             </div>
           </fieldset>
+          ${
+            options.canRename
+              ? `
+                <form class="rename-form" data-rename-form>
+                  <label>Change username <input name="displayName" type="text" maxlength="20" autocomplete="nickname"></label>
+                  <p class="name-error" data-rename-error hidden>Enter 1-20 characters.</p>
+                  <button type="submit">Change username</button>
+                </form>
+              `
+              : ""
+          }
           <fieldset>
             <legend>Assists</legend>
             <div class="assist-options">
@@ -268,7 +290,7 @@ export function mountGame(root, initialState, handlers) {
         <div class="peer-strip"></div>
       </section>
     </main>
-    ${settingsHtml(state, prefs)}
+    ${settingsHtml(state, prefs, { canRename: handlers.online === true && typeof handlers.onRename === "function" })}
     ${resultHtml()}
     ${leaderboardHtml()}
   `;
@@ -316,6 +338,9 @@ export function mountGame(root, initialState, handlers) {
   const widthInput = settingsBackdrop.querySelector('[name="settings-w"]');
   const heightInput = settingsBackdrop.querySelector('[name="settings-h"]');
   const minesInput = settingsBackdrop.querySelector('[name="settings-m"]');
+  const renameForm = settingsBackdrop.querySelector("[data-rename-form]");
+  const displayNameInput = settingsBackdrop.querySelector('[name="displayName"]');
+  const renameError = settingsBackdrop.querySelector("[data-rename-error]");
   let pendingConfig = null;
   let activeLeaderboardPreset = presetForConfig(state) === "custom" ? "expert" : presetForConfig(state);
   let leaderboardBoards = null;
@@ -366,6 +391,12 @@ export function mountGame(root, initialState, handlers) {
     setCheckbox("autoFlag", prefs.autoFlag);
     setRadio("preset", presetForConfig(state));
     setGameInputs(state);
+    if (displayNameInput) {
+      displayNameInput.value = state.you?.name || "";
+    }
+    if (renameError) {
+      renameError.hidden = true;
+    }
     clearConfirm();
     updateGameValidation();
   }
@@ -400,7 +431,7 @@ export function mountGame(root, initialState, handlers) {
     if (handlers.online && state.leaderboardPending) {
       return "Checking leaderboard...";
     }
-    return handlers.online ? "Leaderboard result unavailable." : "Offline game: no leaderboard.";
+    return handlers.online ? "Leaderboard result unavailable." : "UNRANKED: offline games do not record leaderboard wins.";
   }
 
   function renderResult() {
@@ -470,10 +501,16 @@ export function mountGame(root, initialState, handlers) {
     const tbody = document.createElement("tbody");
     entries.forEach((entry, index) => {
       const row = document.createElement("tr");
+      const contributorNames = Array.isArray(entry.contributors)
+        ? entry.contributors.map((contributor) => contributor?.name).filter((name) => typeof name === "string" && name)
+        : [];
+      const legacyPlayerNames = Array.isArray(entry.players)
+        ? entry.players.filter((name) => typeof name === "string" && name)
+        : [];
       const cells = [
         String(index + 1),
         formatPreciseMs(entry.timeMs),
-        Array.isArray(entry.players) && entry.players.length > 0 ? entry.players.join(", ") : "Unknown",
+        (contributorNames.length > 0 ? contributorNames : legacyPlayerNames).join(", ") || "Unknown",
         entry.finishedAt ? new Date(entry.finishedAt).toLocaleDateString() : ""
       ];
       for (const value of cells) {
@@ -545,6 +582,12 @@ export function mountGame(root, initialState, handlers) {
   });
 
   settingsBackdrop.addEventListener("input", (event) => {
+    if (event.target === displayNameInput) {
+      if (renameError) {
+        renameError.hidden = true;
+      }
+      return;
+    }
     if (!event.target?.matches?.("[data-config-input]")) {
       return;
     }
@@ -566,6 +609,25 @@ export function mountGame(root, initialState, handlers) {
       clearConfirm();
       updateGameValidation();
     }
+  });
+
+  settingsBackdrop.addEventListener("submit", (event) => {
+    if (event.target !== renameForm) {
+      return;
+    }
+    event.preventDefault();
+    const name = cleanName(displayNameInput?.value);
+    if (!name) {
+      if (renameError) {
+        renameError.hidden = false;
+      }
+      displayNameInput?.focus();
+      return;
+    }
+    if (displayNameInput) {
+      displayNameInput.value = name;
+    }
+    handlers.onRename?.(name);
   });
 
   resultBackdrop.addEventListener("click", (event) => {
@@ -881,6 +943,22 @@ export function mountGame(root, initialState, handlers) {
       state.peers.set(peer.playerId, peer);
       if (state.you?.playerId === peer.playerId) {
         state.you = peer;
+      }
+      presence.upsertPeer(peer, state.you?.playerId);
+      updateAll();
+    },
+    renamePeer(playerId, name) {
+      const existing = state.peers.get(playerId);
+      if (!existing) {
+        return;
+      }
+      const peer = { ...existing, name };
+      state.peers.set(playerId, peer);
+      if (state.you?.playerId === playerId) {
+        state.you = peer;
+        if (displayNameInput && !settingsBackdrop.hidden) {
+          displayNameInput.value = name;
+        }
       }
       presence.upsertPeer(peer, state.you?.playerId);
       updateAll();

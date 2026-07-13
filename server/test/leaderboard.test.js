@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { SELF, env } from "cloudflare:test";
+import { SELF, env, runInDurableObject } from "cloudflare:test";
 
 function entry(overrides = {}) {
   return {
     timeMs: 1000,
-    players: ["Ada"],
+    contributors: [{ name: "Ada", token: "tok-a" }],
     preset: "beginner",
     finishedAt: 100000,
     ...overrides
@@ -13,6 +13,11 @@ function entry(overrides = {}) {
 
 function leaderboard() {
   return env.LEADERBOARD.getByName("global");
+}
+
+async function storedEntries(preset) {
+  const stub = leaderboard();
+  return (await runInDurableObject(stub, async (_instance, state) => state.storage.get(`lb:${preset}`))) || [];
 }
 
 describe("Leaderboard", () => {
@@ -65,6 +70,34 @@ describe("Leaderboard", () => {
     expect(boards.expert.map((item) => item.timeMs)).toEqual([2000]);
     expect(boards.intermediate).toEqual([]);
     expect(boards.zhenghua).toEqual([]);
+  });
+
+  it("serves contributor names without exposing session tokens", async () => {
+    const lb = leaderboard();
+    await lb.recordWin(entry({ contributors: [{ name: "Ada", token: "private-token" }] }));
+
+    const boards = await lb.getBoards();
+
+    expect(boards.beginner[0].contributors).toEqual([{ name: "Ada" }]);
+    expect(JSON.stringify(boards)).not.toContain("private-token");
+  });
+
+  it("renames only matching contributor tokens without changing timing or order", async () => {
+    const lb = leaderboard();
+    await lb.recordWin(entry({ timeMs: 900, finishedAt: 300000, contributors: [{ name: "aidan", token: "tok-a" }] }));
+    await lb.recordWin(entry({ timeMs: 800, finishedAt: 200000, contributors: [{ name: "aidan", token: "tok-b" }] }));
+    await lb.recordWin(entry({ timeMs: 950, finishedAt: 100000, contributors: [{ name: "Ada", token: "tok-a" }] }));
+    const before = await storedEntries("beginner");
+    const beforeTiming = before.map((item) => [item.timeMs, item.finishedAt]);
+    const beforeTokens = before.map((item) => item.contributors.map((contributor) => contributor.token));
+
+    const renamed = await lb.renameToken("tok-a", "Ada Prime");
+    const after = await storedEntries("beginner");
+
+    expect(renamed).toBe(2);
+    expect(after.map((item) => [item.timeMs, item.finishedAt])).toEqual(beforeTiming);
+    expect(after.map((item) => item.contributors.map((contributor) => contributor.token))).toEqual(beforeTokens);
+    expect(after.map((item) => item.contributors[0].name)).toEqual(["aidan", "Ada Prime", "Ada Prime"]);
   });
 
   it("serves GET /leaderboard as JSON with CORS and cache headers", async () => {
