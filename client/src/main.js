@@ -197,8 +197,8 @@ function bootTransport(transport) {
   transport.on("snapshot", (snapshot) => {
     remount(snapshot);
   });
-  transport.on("events", (events) => {
-    api?.applyEvents(events);
+  transport.on("events", (message) => {
+    api?.applyEvents(message);
   });
   transport.on("peer_join", (peer) => {
     api?.upsertPeer(peer);

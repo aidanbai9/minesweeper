@@ -162,10 +162,12 @@ describe("GameRoom", () => {
     expect(snapB.config).toEqual({ w: 9, h: 9, mineCount: 10 });
     expect(snapA.config.seed).toBeUndefined();
 
-    a.send({ t: "ACTION", action: { type: "REVEAL", idx: 40 } });
+    a.send({ t: "ACTION", seq: 11, action: { type: "REVEAL", idx: 40 } });
     const eventA = await a.next((message) => message.t === "EVENTS");
     const eventB = await b.next((message) => message.t === "EVENTS");
 
+    expect(eventA.seq).toBe(11);
+    expect(eventB.seq).toBeUndefined();
     expect(eventA.events).toEqual(eventB.events);
     expect(eventA.events.some((event) => event.t === "OPEN")).toBe(true);
     expect(frameHasMines(eventA)).toBe(false);
@@ -187,7 +189,34 @@ describe("GameRoom", () => {
     await a.next((message) => message.t === "EVENTS");
     await b.next((message) => message.t === "EVENTS");
 
-    expect(await a.noMessage((message) => message.t === "EVENTS")).toBe(true);
+    expect(await a.noMessage((message) => message.t === "EVENTS" && message.events.length > 0)).toBe(true);
+    expect(await b.noMessage((message) => message.t === "EVENTS" && message.events.length > 0)).toBe(true);
+
+    a.close();
+    b.close();
+  });
+
+  it("acks a no-op chord only to the acting socket without changing state", async () => {
+    const code = "abcde23n";
+    const a = await connect(code, "?seed=noop&w=5&h=5&m=1");
+    const b = await connect(code);
+    await a.next((message) => message.t === "SNAPSHOT");
+    await b.next((message) => message.t === "SNAPSHOT");
+
+    const board = manualBoard(5, 5, [6]);
+    const state = playingState(board);
+    state.revealed[0] = 1;
+    state.revealedCount = 1;
+    await replaceRoomState(code, state);
+    const before = await storedRoomState(code);
+
+    a.send({ t: "ACTION", seq: 42, action: { type: "CHORD", idx: 0 } });
+    const ack = await a.next((message) => message.t === "EVENTS");
+    const after = await storedRoomState(code);
+
+    expect(ack.seq).toBe(42);
+    expect(ack.events).toEqual([]);
+    expect(after).toEqual(before);
     expect(await b.noMessage((message) => message.t === "EVENTS")).toBe(true);
 
     a.close();

@@ -3,6 +3,7 @@ import { assertConfig, normalizeConfig } from "../../engine/src/index.js";
 export const VERSION = 1;
 export const ACTION_TYPES = new Set(["REVEAL", "FLAG", "CHORD"]);
 export const CLIENT_TYPES = new Set(["HELLO", "ACTION", "CURSOR", "RESET", "RECONFIG"]);
+export const SERVER_TYPES = new Set(["SNAPSHOT", "EVENTS", "PEER_JOIN", "PEER_LEAVE", "CURSOR", "NOTICE", "ERROR"]);
 
 function isPlainObject(value) {
   return value && typeof value === "object" && !Array.isArray(value);
@@ -26,6 +27,16 @@ function validateAssist(assist) {
     return { ok: false, code: "bad_action", message: "Assist must contain autoChord and autoFlag booleans" };
   }
   return { ok: true, value: { autoChord: assist.autoChord, autoFlag: assist.autoFlag } };
+}
+
+function validateSeq(seq) {
+  if (seq === undefined) {
+    return { ok: true, value: undefined };
+  }
+  if (!Number.isSafeInteger(seq) || seq < 0) {
+    return { ok: false, code: "bad_seq", message: "Action sequence must be a non-negative safe integer" };
+  }
+  return { ok: true, value: seq };
 }
 
 export function parseJsonMessage(raw) {
@@ -110,12 +121,20 @@ export function validateInbound(value, totalCells) {
   if (!assist.ok) {
     return assist;
   }
+  const seq = validateSeq(value.seq);
+  if (!seq.ok) {
+    return seq;
+  }
 
   const normalized = { type: action.type, idx: action.idx };
   if (assist.value !== undefined) {
     normalized.assist = assist.value;
   }
-  return { ok: true, value: { v: VERSION, t: "ACTION", action: normalized } };
+  const message = { v: VERSION, t: "ACTION", action: normalized };
+  if (seq.value !== undefined) {
+    message.seq = seq.value;
+  }
+  return { ok: true, value: message };
 }
 
 export function cleanName(name) {

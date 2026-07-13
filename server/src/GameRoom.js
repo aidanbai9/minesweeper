@@ -222,12 +222,14 @@ export class GameRoom extends DurableObject {
     });
 
     if (result.events.length === 0) {
+      this.send(ws, { t: "EVENTS", seq: message.seq, events: [] });
       return;
     }
 
     await this.saveState(result.state);
     await this.bumpAlarm(now);
-    this.broadcast({ t: "EVENTS", events: result.events });
+    this.send(ws, { t: "EVENTS", seq: message.seq, events: result.events });
+    this.broadcast({ t: "EVENTS", events: result.events }, ws);
   }
 
   async webSocketClose(ws) {

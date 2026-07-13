@@ -1,5 +1,7 @@
 import { neighbors } from "../engine/index.js";
 
+let nextActionSeq = 1;
+
 function cellIdxFromEvent(event) {
   const cell = event.target.closest?.(".cell");
   return cell ? Number(cell.dataset.idx) : -1;
@@ -26,8 +28,14 @@ export function setupInput(board, api, transport) {
   let lastCursorAt = 0;
   let spaceHeld = false;
 
-  function sendAction(action) {
-    transport.send({ ...action, assist: api.getAssist() });
+  function sendAction(action, pendingIndices = null) {
+    const seq = nextActionSeq;
+    nextActionSeq += 1;
+    if (pendingIndices) {
+      api.setPending(pendingIndices, seq);
+    }
+    transport.send({ ...action, seq, assist: api.getAssist() });
+    return seq;
   }
 
   function press(indices) {
@@ -41,12 +49,6 @@ export function setupInput(board, api, transport) {
       api.clearPressed();
     }
     api.setHeld(false);
-  }
-
-  function clearKeyboardHold() {
-    if (held?.keyboard) {
-      clear();
-    }
   }
 
   function sendCursor(idx, force = false) {
@@ -109,8 +111,7 @@ export function setupInput(board, api, transport) {
     }
     const idx = cellIdxFromEvent(event);
     if (idx === held.idx) {
-      api.setPending(held.indices || []);
-      sendAction({ type: held.type, idx });
+      sendAction({ type: held.type, idx }, held.indices || []);
       clear(false);
       return;
     }
@@ -143,8 +144,6 @@ export function setupInput(board, api, transport) {
       const indices = chordPressedCells(state, idx);
       held = { type: "CHORD", idx, keyboard: true, indices };
       press(indices);
-      api.setPending(indices);
-      sendAction({ type: "CHORD", idx });
     }
   }
 
@@ -154,7 +153,12 @@ export function setupInput(board, api, transport) {
     }
     event.preventDefault();
     spaceHeld = false;
-    clearKeyboardHold();
+    if (held?.keyboard) {
+      sendAction({ type: held.type, idx: held.idx }, held.indices || []);
+      clear(false);
+    } else {
+      clear();
+    }
   }
 
   board.addEventListener("mousemove", onMouseMove);

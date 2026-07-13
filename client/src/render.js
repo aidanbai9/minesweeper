@@ -507,6 +507,20 @@ export function mountGame(root, initialState, handlers) {
     return released;
   }
 
+  function clearPendingForSeq(seq) {
+    if (!Number.isSafeInteger(seq)) {
+      return [];
+    }
+
+    const released = [];
+    for (const group of [...pendingGroups]) {
+      if (group.seq === seq) {
+        released.push(...releasePendingGroup(group));
+      }
+    }
+    return released;
+  }
+
   function clearAllPending() {
     const released = [];
     for (const group of [...pendingGroups]) {
@@ -515,13 +529,13 @@ export function mountGame(root, initialState, handlers) {
     updateCells(released);
   }
 
-  function setPending(indices) {
+  function setPending(indices, seq) {
     const unique = [...new Set(indices)].filter((idx) => idx >= 0 && idx < cells.length);
     if (unique.length === 0) {
       return;
     }
 
-    const group = { indices: new Set(unique), timeout: 0 };
+    const group = { seq, indices: new Set(unique), timeout: 0 };
     pendingGroups.add(group);
     for (const idx of unique) {
       pending.add(idx);
@@ -531,8 +545,13 @@ export function mountGame(root, initialState, handlers) {
     group.timeout = setTimeout(() => clearPendingGroup(group), PENDING_TIMEOUT_MS);
   }
 
-  function applyEvents(events) {
+  function applyEvents(message) {
+    const frame = Array.isArray(message) ? { events: message } : message || { events: [] };
+    const events = Array.isArray(frame.events) ? frame.events : [];
     const changed = new Set();
+    for (const idx of clearPendingForSeq(frame.seq)) {
+      changed.add(idx);
+    }
     for (const event of events) {
       if (event.t === "START") {
         state.status = STATUS.PLAYING;

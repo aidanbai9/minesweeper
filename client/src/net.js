@@ -70,7 +70,7 @@ export function createNetTransport({ code, config, name = "Player" }) {
         emitter.emit("snapshot", message);
       } else if (message.t === "EVENTS") {
         outbox = [];
-        emitter.emit("events", message.events);
+        emitter.emit("events", { seq: message.seq, events: message.events || [] });
       } else if (message.t === "PEER_JOIN") {
         emitter.emit("peer_join", message.peer);
       } else if (message.t === "PEER_LEAVE") {
@@ -113,7 +113,7 @@ export function createNetTransport({ code, config, name = "Player" }) {
       if (action.assist) {
         payload.assist = action.assist;
       }
-      const message = { t: "ACTION", action: payload };
+      const message = { t: "ACTION", seq: action.seq, action: payload };
       outbox.push(message);
       if (outbox.length > 100) {
         outbox = outbox.slice(-100);

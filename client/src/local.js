@@ -94,9 +94,7 @@ export function createLocalTransport(config) {
       }
       const result = applyAction(state, { ...action, playerId: 0, now: Date.now() });
       state = result.state;
-      if (result.events.length > 0) {
-        emitter.emit("events", result.events);
-      }
+      emitter.emit("events", { seq: action.seq, events: result.events });
     },
     on: emitter.on,
     reset() {
