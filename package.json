@@ -1,0 +1,22 @@
+{
+  "name": "minesweeper-server-root",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "engine",
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev:server": "wrangler dev",
+    "dev:client": "npm run sync-engine && npx http-server client -p 8080 -c-1",
+    "sync-engine": "node scripts/sync-engine.mjs",
+    "test": "vitest run",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.8.70",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.24.3"
+  }
+}

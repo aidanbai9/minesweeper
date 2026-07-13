@@ -1,0 +1,75 @@
+.led {
+  display: flex;
+  align-items: center;
+  gap: var(--led-gap);
+  height: var(--led-height);
+  padding: var(--led-pad-y) var(--led-pad-x);
+  background: #000000;
+  border-top: var(--bevel) solid #7b7b7b;
+  border-left: var(--bevel) solid #7b7b7b;
+  border-right: var(--bevel) solid #ffffff;
+  border-bottom: var(--bevel) solid #ffffff;
+}
+
+.led-digit {
+  position: relative;
+  width: var(--led-digit-w);
+  height: var(--led-digit-h);
+}
+
+.seg {
+  position: absolute;
+  background: #3f0000;
+}
+
+.seg.on {
+  background: #ff0000;
+}
+
+.seg-a,
+.seg-d,
+.seg-g {
+  left: var(--led-seg-left);
+  width: var(--led-seg-long);
+  height: var(--led-seg-thick);
+}
+
+.seg-a {
+  top: var(--led-seg-edge);
+}
+
+.seg-g {
+  top: var(--led-seg-mid);
+}
+
+.seg-d {
+  bottom: var(--led-seg-edge);
+}
+
+.seg-b,
+.seg-c,
+.seg-e,
+.seg-f {
+  width: var(--led-seg-thick);
+  height: var(--led-seg-long);
+}
+
+.seg-b {
+  top: var(--led-seg-top);
+  right: var(--led-seg-edge);
+}
+
+.seg-c {
+  bottom: var(--led-seg-top);
+  right: var(--led-seg-edge);
+}
+
+.seg-e {
+  bottom: var(--led-seg-top);
+  left: var(--led-seg-edge);
+}
+
+.seg-f {
+  top: var(--led-seg-top);
+  left: var(--led-seg-edge);
+}
