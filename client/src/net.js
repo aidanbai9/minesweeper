@@ -109,7 +109,11 @@ export function createNetTransport({ code, config, name = "Player" }) {
         sendRaw({ t: "CURSOR", idx: action.idx });
         return;
       }
-      const message = { t: "ACTION", action: { type: action.type, idx: action.idx } };
+      const payload = { type: action.type, idx: action.idx };
+      if (action.assist) {
+        payload.assist = action.assist;
+      }
+      const message = { t: "ACTION", action: payload };
       outbox.push(message);
       if (outbox.length > 100) {
         outbox = outbox.slice(-100);

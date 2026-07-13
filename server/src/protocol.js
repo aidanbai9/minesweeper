@@ -8,6 +8,26 @@ function isPlainObject(value) {
   return value && typeof value === "object" && !Array.isArray(value);
 }
 
+function validateAssist(assist) {
+  if (assist === undefined) {
+    return { ok: true, value: undefined };
+  }
+  if (!isPlainObject(assist)) {
+    return { ok: false, code: "bad_action", message: "Assist must be an object" };
+  }
+  const keys = Object.keys(assist);
+  if (
+    keys.length !== 2 ||
+    !Object.prototype.hasOwnProperty.call(assist, "autoChord") ||
+    !Object.prototype.hasOwnProperty.call(assist, "autoFlag") ||
+    typeof assist.autoChord !== "boolean" ||
+    typeof assist.autoFlag !== "boolean"
+  ) {
+    return { ok: false, code: "bad_action", message: "Assist must contain autoChord and autoFlag booleans" };
+  }
+  return { ok: true, value: { autoChord: assist.autoChord, autoFlag: assist.autoFlag } };
+}
+
 export function parseJsonMessage(raw) {
   if (typeof raw !== "string") {
     return { ok: false, code: "bad_json", message: "Message must be JSON text" };
@@ -86,7 +106,16 @@ export function validateInbound(value, totalCells) {
     return { ok: false, code: "bad_idx", message: "Action index is outside the board" };
   }
 
-  return { ok: true, value: { v: VERSION, t: "ACTION", action: { type: action.type, idx: action.idx } } };
+  const assist = validateAssist(action.assist);
+  if (!assist.ok) {
+    return assist;
+  }
+
+  const normalized = { type: action.type, idx: action.idx };
+  if (assist.value !== undefined) {
+    normalized.assist = assist.value;
+  }
+  return { ok: true, value: { v: VERSION, t: "ACTION", action: normalized } };
 }
 
 export function cleanName(name) {

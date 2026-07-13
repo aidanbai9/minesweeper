@@ -1,3 +1,4 @@
+import { PEER_PALETTE } from "./presence.js";
 import { applyAction, createGame, normalizeConfig, Status } from "../engine/index.js";
 
 function makeEmitter() {
@@ -79,7 +80,7 @@ function updateHash(config) {
 
 export function createLocalTransport(config) {
   const emitter = makeEmitter();
-  const you = { playerId: 0, name: "You", color: "#ff0000" };
+  const you = { playerId: 0, name: "You", color: PEER_PALETTE[0] };
   let gameConfig = normalizeConfig(config);
   let state = createGame(gameConfig);
 

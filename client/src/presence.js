@@ -1,7 +1,20 @@
+import { AUTO_FLAG } from "../engine/index.js";
+
+export const CLASSIC_FLAG_COLOR = "#ff0000";
+export const PEER_PALETTE = Object.freeze([
+  "#0000ff",
+  "#008000",
+  "#800080",
+  "#008080",
+  "#800000",
+  "#000080",
+  "#808000",
+  "#ff7f00"
+]);
+
 export function createPresence(cells, peerListEl) {
   const peers = new Map();
   const cursors = new Map();
-  const peerPalette = ["#ff7f00", "#0000ff", "#008000", "#800080", "#008080", "#800000", "#000080", "#808000"];
   let currentYouId = null;
 
   function isClassicFlagRed(color) {
@@ -9,9 +22,16 @@ export function createPresence(cells, peerListEl) {
   }
 
   function colorFor(playerId) {
-    const fallback = Number.isInteger(playerId) ? peerPalette[playerId % peerPalette.length] : "#000000";
+    if (playerId === AUTO_FLAG || playerId === AUTO_FLAG - 1) {
+      return CLASSIC_FLAG_COLOR;
+    }
+    const fallback = Number.isInteger(playerId) ? PEER_PALETTE[playerId % PEER_PALETTE.length] : "#000000";
     const color = peers.get(playerId)?.color || fallback;
-    return playerId !== currentYouId && isClassicFlagRed(color) ? peerPalette[0] : color;
+    return isClassicFlagRed(color) ? fallback : color;
+  }
+
+  function peerCount() {
+    return peers.size;
   }
 
   function cursorsAt(idx) {
@@ -43,6 +63,7 @@ export function createPresence(cells, peerListEl) {
 
   function renderPeerList(youId) {
     const ordered = [...peers.values()].sort((a, b) => a.playerId - b.playerId);
+    peerListEl.hidden = ordered.length < 2;
     peerListEl.innerHTML = ordered
       .map(
         (peer) => `
@@ -90,6 +111,7 @@ export function createPresence(cells, peerListEl) {
       refreshCell(idx);
     },
     colorFor,
+    peerCount,
     refreshCell,
     refreshAll
   };

@@ -26,14 +26,20 @@ export function setupInput(board, api, transport) {
   let lastCursorAt = 0;
   let spaceHeld = false;
 
+  function sendAction(action) {
+    transport.send({ ...action, assist: api.getAssist() });
+  }
+
   function press(indices) {
     api.setPressed(indices);
     api.setHeld(true);
   }
 
-  function clear() {
+  function clear(clearPressed = true) {
     held = null;
-    api.clearPressed();
+    if (clearPressed) {
+      api.clearPressed();
+    }
     api.setHeld(false);
   }
 
@@ -79,19 +85,21 @@ export function setupInput(board, api, transport) {
     }
     const state = api.getState();
     if (event.button === 0) {
-      held = { type: "REVEAL", idx };
+      const indices = !state.revealed[idx] && !state.flags[idx] ? [idx] : [];
+      held = { type: "REVEAL", idx, indices };
       if (!state.revealed[idx] && !state.flags[idx]) {
-        press([idx]);
+        press(indices);
       } else {
         api.setHeld(true);
       }
     } else if (event.button === 1) {
       event.preventDefault();
-      held = { type: "CHORD", idx };
-      press(chordPressedCells(state, idx));
+      const indices = chordPressedCells(state, idx);
+      held = { type: "CHORD", idx, indices };
+      press(indices);
     } else if (event.button === 2) {
       event.preventDefault();
-      transport.send({ type: "FLAG", idx });
+      sendAction({ type: "FLAG", idx });
     }
   }
 
@@ -101,7 +109,10 @@ export function setupInput(board, api, transport) {
     }
     const idx = cellIdxFromEvent(event);
     if (idx === held.idx) {
-      transport.send({ type: held.type, idx });
+      api.setPending(held.indices || []);
+      sendAction({ type: held.type, idx });
+      clear(false);
+      return;
     }
     clear();
   }
@@ -125,13 +136,15 @@ export function setupInput(board, api, transport) {
     }
     const state = api.getState();
     if (!state.revealed[idx]) {
-      transport.send({ type: "FLAG", idx });
+      sendAction({ type: "FLAG", idx });
       return;
     }
     if (state.counts[idx] > 0) {
-      held = { type: "CHORD", idx, keyboard: true };
-      press(chordPressedCells(state, idx));
-      transport.send({ type: "CHORD", idx });
+      const indices = chordPressedCells(state, idx);
+      held = { type: "CHORD", idx, keyboard: true, indices };
+      press(indices);
+      api.setPending(indices);
+      sendAction({ type: "CHORD", idx });
     }
   }
 

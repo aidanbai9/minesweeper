@@ -229,9 +229,14 @@ input {
   border-bottom: var(--bevel) solid #7b7b7b;
 }
 
-.cell.revealed,
-.cell.pressed {
+.cell.revealed {
   background: #c0c0c0;
+  border: var(--thin-bevel) solid #7b7b7b;
+}
+
+.cell.pressed,
+.cell.pending {
+  background: #b8b8b8;
   border: var(--thin-bevel) solid #7b7b7b;
 }
 

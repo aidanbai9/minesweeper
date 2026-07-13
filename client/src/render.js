@@ -1,11 +1,11 @@
 import { createChrome } from "./chrome.js";
-import { createPresence } from "./presence.js";
-import { PRESETS } from "../engine/index.js";
+import { CLASSIC_FLAG_COLOR, createPresence } from "./presence.js";
+import { AUTO_FLAG, PRESETS } from "../engine/index.js";
 
 const STATUS = { PENDING: 0, PLAYING: 1, WON: 2, LOST: 3 };
 const NUMBER_CLASSES = ["", "n1", "n2", "n3", "n4", "n5", "n6", "n7", "n8"];
 const CELL_SIZE_OPTIONS = ["100", "150", "200"];
-const CLASSIC_FLAG_COLOR = "#ff0000";
+const PENDING_TIMEOUT_MS = 1500;
 const PRESET_OPTIONS = [
   ["beginner", "Beginner"],
   ["intermediate", "Intermediate"],
@@ -52,6 +52,19 @@ function settingsHtml(state, prefs) {
                   </label>
                 `
               ).join("")}
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Assists</legend>
+            <div class="assist-options">
+              <label>
+                <input type="checkbox" name="autoChord"${checked(prefs.autoChord, true)}>
+                <span>Auto-chord</span>
+              </label>
+              <label>
+                <input type="checkbox" name="autoFlag"${checked(prefs.autoFlag, true)}>
+                <span>Auto-flag</span>
+              </label>
             </div>
           </fieldset>
         </section>
@@ -180,10 +193,15 @@ export function stateFromSnapshot(snapshot) {
 
 export function mountGame(root, initialState, handlers) {
   let state = initialState;
-  let prefs = { cellSize: "100", ...(handlers.prefs || {}) };
+  let prefs = { cellSize: "100", autoChord: false, autoFlag: false, ...(handlers.prefs || {}) };
   let held = false;
   let timer = 0;
+  let renderFrame = 0;
+  let renderChrome = false;
   const toastTimers = new Set();
+  const pending = new Set();
+  const pendingGroups = new Set();
+  const dirtyCells = new Set();
 
   root.innerHTML = `
     <div class="reconnect-banner" hidden>reconnecting...</div>
@@ -237,6 +255,13 @@ export function mountGame(root, initialState, handlers) {
     }
   }
 
+  function setCheckbox(name, value) {
+    const input = settingsBackdrop.querySelector(`input[name="${name}"]`);
+    if (input) {
+      input.checked = Boolean(value);
+    }
+  }
+
   function clearConfirm() {
     pendingConfig = null;
     confirmRow.hidden = true;
@@ -265,6 +290,8 @@ export function mountGame(root, initialState, handlers) {
 
   function syncSettingsForm() {
     setRadio("cellSize", prefs.cellSize);
+    setCheckbox("autoChord", prefs.autoChord);
+    setCheckbox("autoFlag", prefs.autoFlag);
     setRadio("preset", presetForConfig(state));
     setGameInputs(state);
     clearConfirm();
@@ -309,6 +336,9 @@ export function mountGame(root, initialState, handlers) {
     if (target.name === "cellSize") {
       prefs = { ...prefs, cellSize: target.value };
       handlers.onPrefsChange?.({ cellSize: target.value });
+    } else if (target.name === "autoChord" || target.name === "autoFlag") {
+      prefs = { ...prefs, [target.name]: target.checked };
+      handlers.onPrefsChange?.({ [target.name]: target.checked });
     } else if (target.name === "preset") {
       if (target.value !== "custom") {
         setGameInputs(PRESETS[target.value]);
@@ -353,11 +383,12 @@ export function mountGame(root, initialState, handlers) {
   updateGameValidation();
 
   function flagColor(idx) {
-    const owner = state.flags[idx] - 1;
-    if (owner < 0 || owner === state.you?.playerId) {
+    const flag = state.flags[idx];
+    if (flag === AUTO_FLAG || presence.peerCount() < 2) {
       return CLASSIC_FLAG_COLOR;
     }
-    return presence.colorFor(owner);
+    const owner = flag - 1;
+    return owner < 0 ? CLASSIC_FLAG_COLOR : presence.colorFor(owner);
   }
 
   function updateCell(idx) {
@@ -368,6 +399,7 @@ export function mountGame(root, initialState, handlers) {
     const isLostMine = state.status === STATUS.LOST && isMine;
     const isWonMine = state.status === STATUS.WON && isMine;
     const flagged = state.flags[idx] > 0 || isWonMine;
+    const isPending = pending.has(idx);
     const count = state.counts[idx];
 
     cell.className = "cell";
@@ -385,6 +417,8 @@ export function mountGame(root, initialState, handlers) {
     } else if (flagged && !isRevealed) {
       cell.classList.add("unrevealed", "flagged");
       cell.innerHTML = flagSvg(flagColor(idx));
+    } else if (isPending && !isRevealed) {
+      cell.classList.add("pending");
     } else if (isRevealed) {
       cell.classList.add("revealed");
       if (count > 0) {
@@ -398,19 +432,103 @@ export function mountGame(root, initialState, handlers) {
     presence.refreshCell(idx);
   }
 
-  function updateCells(indices) {
+  function flushRender() {
+    renderFrame = 0;
+    const indices = [...dirtyCells];
+    dirtyCells.clear();
     for (const idx of indices) {
       updateCell(idx);
     }
-    chrome.update(state, held);
+    if (renderChrome) {
+      chrome.update(state, held);
+      renderChrome = false;
+    }
+  }
+
+  function updateCells(indices) {
+    for (const idx of indices) {
+      if (idx >= 0 && idx < cells.length) {
+        dirtyCells.add(idx);
+      }
+    }
+    renderChrome = true;
+    if (!renderFrame) {
+      renderFrame = requestAnimationFrame(flushRender);
+    }
   }
 
   function updateAll() {
+    if (renderFrame) {
+      cancelAnimationFrame(renderFrame);
+      renderFrame = 0;
+    }
+    dirtyCells.clear();
+    renderChrome = false;
     for (let idx = 0; idx < cells.length; idx += 1) {
       updateCell(idx);
     }
     chrome.update(state, held);
     presence.refreshAll();
+  }
+
+  function releasePendingGroup(group) {
+    clearTimeout(group.timeout);
+    pendingGroups.delete(group);
+    const released = [];
+    for (const idx of group.indices) {
+      let stillPending = false;
+      for (const other of pendingGroups) {
+        if (other.indices.has(idx)) {
+          stillPending = true;
+          break;
+        }
+      }
+      if (!stillPending) {
+        pending.delete(idx);
+        cells[idx]?.classList.remove("pending");
+        released.push(idx);
+      }
+    }
+    return released;
+  }
+
+  function clearPendingGroup(group) {
+    const released = releasePendingGroup(group);
+    updateCells(released);
+  }
+
+  function clearPendingForChanged(changed) {
+    const released = [];
+    for (const group of [...pendingGroups]) {
+      if ([...group.indices].some((idx) => changed.has(idx))) {
+        released.push(...releasePendingGroup(group));
+      }
+    }
+    return released;
+  }
+
+  function clearAllPending() {
+    const released = [];
+    for (const group of [...pendingGroups]) {
+      released.push(...releasePendingGroup(group));
+    }
+    updateCells(released);
+  }
+
+  function setPending(indices) {
+    const unique = [...new Set(indices)].filter((idx) => idx >= 0 && idx < cells.length);
+    if (unique.length === 0) {
+      return;
+    }
+
+    const group = { indices: new Set(unique), timeout: 0 };
+    pendingGroups.add(group);
+    for (const idx of unique) {
+      pending.add(idx);
+      cells[idx]?.classList.remove("pressed");
+      cells[idx]?.classList.add("pending");
+    }
+    group.timeout = setTimeout(() => clearPendingGroup(group), PENDING_TIMEOUT_MS);
   }
 
   function applyEvents(events) {
@@ -448,10 +566,13 @@ export function mountGame(root, initialState, handlers) {
         state.mines = new Set(event.mines);
         state.flagCount = state.mineCount;
         for (const idx of event.mines) {
-          state.flags[idx] ||= (state.you?.playerId ?? 0) + 1;
+          state.flags[idx] ||= AUTO_FLAG;
           changed.add(idx);
         }
       }
+    }
+    for (const idx of clearPendingForChanged(changed)) {
+      changed.add(idx);
     }
     updateCells(changed);
   }
@@ -495,6 +616,10 @@ export function mountGame(root, initialState, handlers) {
         cell.classList.remove("pressed");
       }
     },
+    setPending,
+    getAssist() {
+      return { autoChord: prefs.autoChord === true, autoFlag: prefs.autoFlag === true };
+    },
     setPeers(peers, you) {
       state.you = you || state.you;
       for (const peer of peers) {
@@ -514,12 +639,16 @@ export function mountGame(root, initialState, handlers) {
     removePeer(playerId) {
       state.peers.delete(playerId);
       presence.removePeer(playerId, state.you?.playerId);
+      updateAll();
     },
     setCursor(playerId, idx) {
       presence.setCursor(playerId, idx);
     },
     setBanner(show) {
       banner.hidden = !show;
+      if (show) {
+        clearAllPending();
+      }
     },
     showNotice,
     setPrefs(nextPrefs) {
@@ -532,6 +661,12 @@ export function mountGame(root, initialState, handlers) {
       window.removeEventListener("keydown", onWindowKeyDown);
       for (const timeout of toastTimers) {
         clearTimeout(timeout);
+      }
+      for (const group of [...pendingGroups]) {
+        releasePendingGroup(group);
+      }
+      if (renderFrame) {
+        cancelAnimationFrame(renderFrame);
       }
       clearInterval(timer);
     }

@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { applyAction, createGame, normalizeConfig, Status } from "../../engine/src/index.js";
 import { cleanName, encode, errorMessage, parseJsonMessage, validateInbound } from "./protocol.js";
 
-const COLORS = ["#ff0000", "#0000ff", "#008000", "#800080", "#008080", "#800000", "#000080", "#808000"];
+const COLORS = ["#0000ff", "#008000", "#800080", "#008080", "#800000", "#000080", "#808000", "#ff7f00"];
 const MAX_PLAYERS = 8;
 const GC_AFTER_MS = 2 * 60 * 60 * 1000;
 const RATE_LIMIT_PER_SEC = 20;
@@ -216,6 +216,7 @@ export class GameRoom extends DurableObject {
     const result = applyAction(state, {
       type: message.action.type,
       idx: message.action.idx,
+      assist: message.action.assist,
       playerId: attachment.playerId,
       now
     });

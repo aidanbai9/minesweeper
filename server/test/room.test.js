@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SELF, env, runInDurableObject } from "cloudflare:test";
-import { Status, applyAction, createGame } from "../../engine/src/index.js";
+import { Status, applyAction, createGame, neighbors } from "../../engine/src/index.js";
 import { deserializeState, serializeState } from "../src/GameRoom.js";
 
 function delay(ms) {
@@ -92,6 +92,45 @@ async function connect(code, query = "") {
 async function storedRoomState(code) {
   const stub = env.GAME.getByName(code);
   return runInDurableObject(stub, async (_instance, state) => state.storage.get("state"));
+}
+
+function manualBoard(w, h, mineIdxs) {
+  const mines = new Uint8Array(w * h);
+  const counts = new Uint8Array(w * h);
+  for (const idx of mineIdxs) {
+    mines[idx] = 1;
+  }
+  for (const idx of mineIdxs) {
+    for (const n of neighbors(idx, w, h)) {
+      counts[n] += 1;
+    }
+  }
+  return { w, h, mineCount: mineIdxs.length, mines, counts, safeIdx: -1 };
+}
+
+function playingState(board) {
+  return {
+    seed: "manual",
+    w: board.w,
+    h: board.h,
+    mineCount: board.mineCount,
+    status: Status.PLAYING,
+    board,
+    revealed: new Uint8Array(board.w * board.h),
+    flags: new Uint8Array(board.w * board.h),
+    flagCount: 0,
+    revealedCount: 0,
+    startedAt: 1,
+    endedAt: 0,
+    lostAt: -1
+  };
+}
+
+async function replaceRoomState(code, state) {
+  const stub = env.GAME.getByName(code);
+  await runInDurableObject(stub, async (_instance, durableState) => {
+    await durableState.storage.put("state", serializeState(state));
+  });
 }
 
 describe("state serialization", () => {
@@ -310,6 +349,75 @@ describe("GameRoom", () => {
     a.send({ t: "ACTION", action: { type: "FLAG", idx: 0 } });
     const events = await a.next((message) => message.t === "EVENTS");
     expect(events.events).toEqual([{ t: "FLAG", idx: 0, playerId: 0, on: true }]);
+
+    a.close();
+  });
+
+  it("broadcasts one assisted cascade as one EVENTS frame", async () => {
+    const code = "abcde24d";
+    const a = await connect(code, "?seed=assist&w=5&h=5&m=1");
+    const b = await connect(code);
+    await a.next((message) => message.t === "SNAPSHOT");
+    await b.next((message) => message.t === "SNAPSHOT");
+
+    const board = manualBoard(5, 5, [6, 18, 24]);
+    const state = playingState(board);
+    state.revealed[0] = 1;
+    state.revealedCount = 1;
+    await replaceRoomState(code, state);
+
+    a.send({ t: "ACTION", action: { type: "FLAG", idx: 6, assist: { autoChord: true, autoFlag: false } } });
+    const eventA = await a.next((message) => message.t === "EVENTS");
+    const eventB = await b.next((message) => message.t === "EVENTS");
+
+    expect(eventA.events).toEqual(eventB.events);
+    expect(eventA.events.filter((event) => event.t === "FLAG")).toHaveLength(1);
+    expect(eventA.events.some((event) => event.t === "OPEN")).toBe(true);
+    expect(frameHasMines(eventA)).toBe(false);
+    expect(await a.noMessage((message) => message.t === "EVENTS")).toBe(true);
+    expect(await b.noMessage((message) => message.t === "EVENTS")).toBe(true);
+
+    a.close();
+    b.close();
+  });
+
+  it("rejects malformed assist payloads without closing the socket", async () => {
+    const code = "abcde24e";
+    const a = await connect(code, "?seed=badassist&w=9&h=9&m=10");
+    await a.next((message) => message.t === "SNAPSHOT");
+
+    a.send({ t: "ACTION", action: { type: "FLAG", idx: 0, assist: null } });
+    expect((await a.next((message) => message.t === "ERROR")).code).toBe("bad_action");
+
+    a.send({ t: "ACTION", action: { type: "FLAG", idx: 0, assist: { autoChord: true, autoFlag: "yes" } } });
+    expect((await a.next((message) => message.t === "ERROR")).code).toBe("bad_action");
+
+    a.send({ t: "ACTION", action: { type: "FLAG", idx: 0, assist: { autoChord: true, autoFlag: false, extra: true } } });
+    expect((await a.next((message) => message.t === "ERROR")).code).toBe("bad_action");
+
+    a.send({ t: "ACTION", action: { type: "FLAG", idx: 0, assist: { autoChord: false, autoFlag: false } } });
+    const events = await a.next((message) => message.t === "EVENTS");
+    expect(events.events).toEqual([{ t: "FLAG", idx: 0, playerId: 0, on: true }]);
+
+    a.close();
+  });
+
+  it("keeps mine layout hidden during assisted cascades", async () => {
+    const code = "abcde24f";
+    const a = await connect(code, "?seed=assistsafe&w=5&h=5&m=1");
+    await a.next((message) => message.t === "SNAPSHOT");
+
+    const board = manualBoard(5, 5, [6, 18, 24]);
+    const state = playingState(board);
+    state.revealed[0] = 1;
+    state.revealedCount = 1;
+    await replaceRoomState(code, state);
+
+    a.send({ t: "ACTION", action: { type: "FLAG", idx: 6, assist: { autoChord: true, autoFlag: false } } });
+    const events = await a.next((message) => message.t === "EVENTS");
+
+    expect(events.events.some((event) => event.t === "OPEN")).toBe(true);
+    expect(frameHasMines(events)).toBe(false);
 
     a.close();
   });

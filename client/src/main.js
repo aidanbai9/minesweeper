@@ -58,7 +58,11 @@ function saveConfig(config) {
 
 function normalizePrefs(value = {}) {
   const cellSize = ["100", "150", "200"].includes(String(value.cellSize)) ? String(value.cellSize) : "100";
-  return { cellSize };
+  return {
+    cellSize,
+    autoChord: value.autoChord === true,
+    autoFlag: value.autoFlag === true
+  };
 }
 
 function loadPrefs() {
