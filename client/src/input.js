@@ -166,7 +166,9 @@ export function setupInput(board, api, transport) {
       return;
     }
     held = { ...action, keyboard: true };
-    press(action.indices || []);
+    const indices = action.indices || [];
+    sendAction({ type: action.type, idx: action.idx }, indices);
+    press(indices);
   }
 
   function onKeyUp(event) {
@@ -176,7 +178,6 @@ export function setupInput(board, api, transport) {
     event.preventDefault();
     spaceHeld = false;
     if (held?.keyboard) {
-      sendAction({ type: held.type, idx: held.idx }, held.indices || []);
       clear(false);
     } else {
       clear();

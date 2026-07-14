@@ -17,6 +17,24 @@ let activeCleanup = null;
 let prefs = loadPrefs();
 let bootToken = 0;
 const sessionToken = createSessionToken();
+const FLAT_TILE_VARS = [
+  "--flat-tile-covered",
+  "--flat-tile-revealed-0",
+  "--flat-tile-revealed-1",
+  "--flat-tile-revealed-2",
+  "--flat-tile-revealed-3",
+  "--flat-tile-revealed-4",
+  "--flat-tile-revealed-5",
+  "--flat-tile-revealed-6",
+  "--flat-tile-revealed-7",
+  "--flat-tile-revealed-8",
+  "--flat-tile-flag",
+  "--flat-tile-wrong-flag",
+  "--flat-tile-mine",
+  "--flat-tile-detonated",
+  "--flat-tile-correct-flag",
+  "--flat-tile-uncovered"
+];
 
 function randomSeed() {
   const bytes = new Uint8Array(12);
@@ -162,6 +180,47 @@ function applyPrefs() {
   const scale = { 100: "1", 150: "1.5", 200: "2" }[prefs.cellSize] || "1";
   document.documentElement.style.setProperty("--scale", scale);
   document.documentElement.dataset.theme = prefs.theme;
+}
+
+function cssUrlToSrc(value) {
+  const match = value.trim().match(/^url\((['"]?)(.*?)\1\)$/);
+  return match ? match[2] : "";
+}
+
+async function preloadFlatTiles() {
+  const probe = document.createElement("div");
+  probe.dataset.theme = "flat";
+  probe.hidden = true;
+  document.body.append(probe);
+  const urls = [
+    ...new Set(
+      FLAT_TILE_VARS.map((name) => {
+        const tile = document.createElement("div");
+        tile.style.backgroundImage = `var(${name})`;
+        probe.append(tile);
+        return cssUrlToSrc(getComputedStyle(tile).backgroundImage);
+      }).filter(Boolean)
+    )
+  ];
+  probe.remove();
+
+  await Promise.all(
+    urls.map(
+      (src) =>
+        new Promise((resolve, reject) => {
+          const image = new Image();
+          image.onload = () => {
+            if (image.decode) {
+              image.decode().then(resolve, reject);
+            } else {
+              resolve();
+            }
+          };
+          image.onerror = reject;
+          image.src = src;
+        })
+    )
+  );
 }
 
 function updatePrefs(nextPrefs) {
@@ -365,4 +424,10 @@ window.addEventListener("hashchange", () => {
 });
 
 applyPrefs();
-void bootFromHash();
+void preloadFlatTiles()
+  .catch((error) => {
+    console.warn("flat tile preload failed", error);
+  })
+  .finally(() => {
+    void bootFromHash();
+  });

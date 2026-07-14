@@ -720,6 +720,7 @@ export function mountGame(root, initialState, handlers) {
     cell.innerHTML = "";
     delete cell.dataset.count;
     cell.style.removeProperty("--flag-cloth");
+    cell.style.removeProperty("--flag-owner-color");
 
     if (isWrong) {
       cell.classList.add("revealed", "wrong-flag");
@@ -732,9 +733,14 @@ export function mountGame(root, initialState, handlers) {
       cell.innerHTML = mineSvg();
     } else if (flagged && !isRevealed) {
       cell.classList.add("unrevealed", "flagged");
+      if (isWonMine) {
+        cell.classList.add("correct-flag");
+      }
       const color = flagColor(idx);
       if (color) {
+        cell.classList.add("peer-flag");
         cell.style.setProperty("--flag-cloth", color);
+        cell.style.setProperty("--flag-owner-color", color);
       }
       cell.innerHTML = isWonMine ? correctFlagSvg() : flagSvg();
     } else if (isPending && !isRevealed) {
