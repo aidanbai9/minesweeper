@@ -107,6 +107,10 @@ export function createLocalTransport(config) {
       updateHash(gameConfig);
       emitter.emit("snapshot", snapshotFromState(state, you));
     },
+    rename(name) {
+      you.name = name;
+      emitter.emit("peer_rename", { playerId: you.playerId, name });
+    },
     close() {}
   };
 }

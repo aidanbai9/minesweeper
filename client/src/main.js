@@ -12,29 +12,15 @@ const LAST_NAME_KEY = "minesweeper:lastName";
 const SESSION_NAME_KEY = "minesweeper:sessionName";
 const SESSION_TOKEN_KEY = "minesweeper:token";
 const ROOM_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
+const DEFAULT_THEME_OPTIONS = [
+  ["classic", "Classic"]
+];
 let activeTransport = null;
 let activeCleanup = null;
-let prefs = loadPrefs();
+let themeOptions = DEFAULT_THEME_OPTIONS;
+let prefs = normalizePrefs();
 let bootToken = 0;
 const sessionToken = createSessionToken();
-const FLAT_TILE_VARS = [
-  "--flat-tile-covered",
-  "--flat-tile-revealed-0",
-  "--flat-tile-revealed-1",
-  "--flat-tile-revealed-2",
-  "--flat-tile-revealed-3",
-  "--flat-tile-revealed-4",
-  "--flat-tile-revealed-5",
-  "--flat-tile-revealed-6",
-  "--flat-tile-revealed-7",
-  "--flat-tile-revealed-8",
-  "--flat-tile-flag",
-  "--flat-tile-wrong-flag",
-  "--flat-tile-mine",
-  "--flat-tile-detonated",
-  "--flat-tile-correct-flag",
-  "--flat-tile-uncovered"
-];
 
 function randomSeed() {
   const bytes = new Uint8Array(12);
@@ -93,8 +79,11 @@ function cleanName(name) {
   return name
     .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
     .trim()
-    .replace(/\s+/g, " ")
-    .slice(0, 20);
+    .replace(/\s+/g, " ");
+}
+
+function isValidName(name) {
+  return Boolean(name) && name.length <= 20;
 }
 
 function persistName(name) {
@@ -114,7 +103,7 @@ function promptForOnlineName() {
         <section class="menu-panel name-panel">
           <h1>Player name</h1>
           <form class="name-form">
-            <label>Name <input name="name" type="text" maxlength="20" autocomplete="nickname"></label>
+            <label>Name <input name="name" type="text" autocomplete="nickname"></label>
             <p class="name-error" hidden>Enter 1-20 characters.</p>
             <button type="submit">Join room</button>
           </form>
@@ -130,7 +119,7 @@ function promptForOnlineName() {
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const name = cleanName(input.value);
-      if (!name) {
+      if (!isValidName(name)) {
         error.hidden = false;
         input.focus();
         return;
@@ -147,9 +136,63 @@ function promptForOnlineName() {
   });
 }
 
-function normalizePrefs(value = {}) {
+function normalizeThemeOptions(value) {
+  if (!Array.isArray(value)) {
+    return DEFAULT_THEME_OPTIONS;
+  }
+  const options = value
+    .map((theme) => {
+      if (!theme || typeof theme !== "object" || Array.isArray(theme)) {
+        return null;
+      }
+      const id = String(theme.id || "").trim();
+      const label = String(theme.label || "").trim();
+      if (!/^[a-z0-9_-]+$/.test(id) || !label) {
+        return null;
+      }
+      return [id, label];
+    })
+    .filter(Boolean);
+  return options.length ? options : DEFAULT_THEME_OPTIONS;
+}
+
+async function loadThemeOptions() {
+  try {
+    const response = await fetch("./themes.json", { cache: "no-cache" });
+    if (!response.ok) {
+      return DEFAULT_THEME_OPTIONS;
+    }
+    return normalizeThemeOptions(await response.json());
+  } catch {
+    return DEFAULT_THEME_OPTIONS;
+  }
+}
+
+function loadThemeStyles(themes) {
+  return Promise.all(
+    themes.map(
+      ([theme]) =>
+        new Promise((resolve) => {
+          if (document.querySelector(`link[data-theme-css="${theme}"]`)) {
+            resolve();
+            return;
+          }
+          const link = document.createElement("link");
+          link.rel = "stylesheet";
+          link.href = `./styles/themes/${theme}.css`;
+          link.dataset.themeCss = theme;
+          link.onload = resolve;
+          link.onerror = resolve;
+          document.head.append(link);
+        })
+    )
+  );
+}
+
+function normalizePrefs(value = {}, themes = themeOptions) {
   const cellSize = ["100", "150", "200"].includes(String(value.cellSize)) ? String(value.cellSize) : "100";
-  const theme = ["classic", "flat"].includes(String(value.theme)) ? String(value.theme) : "classic";
+  const themeIds = new Set(themes.map(([theme]) => theme));
+  const theme = themeIds.has(String(value.theme)) ? String(value.theme) : themes[0]?.[0] || "classic";
   return {
     cellSize,
     theme,
@@ -158,10 +201,10 @@ function normalizePrefs(value = {}) {
   };
 }
 
-function loadPrefs() {
+function loadPrefs(themes = themeOptions) {
   try {
     const raw = localStorage.getItem(PREFS_STORAGE_KEY);
-    const normalized = normalizePrefs(raw ? JSON.parse(raw) || {} : {});
+    const normalized = normalizePrefs(raw ? JSON.parse(raw) || {} : {}, themes);
     if (raw) {
       const serialized = JSON.stringify(normalized);
       if (raw !== serialized) {
@@ -180,47 +223,6 @@ function applyPrefs() {
   const scale = { 100: "1", 150: "1.5", 200: "2" }[prefs.cellSize] || "1";
   document.documentElement.style.setProperty("--scale", scale);
   document.documentElement.dataset.theme = prefs.theme;
-}
-
-function cssUrlToSrc(value) {
-  const match = value.trim().match(/^url\((['"]?)(.*?)\1\)$/);
-  return match ? match[2] : "";
-}
-
-async function preloadFlatTiles() {
-  const probe = document.createElement("div");
-  probe.dataset.theme = "flat";
-  probe.hidden = true;
-  document.body.append(probe);
-  const urls = [
-    ...new Set(
-      FLAT_TILE_VARS.map((name) => {
-        const tile = document.createElement("div");
-        tile.style.backgroundImage = `var(${name})`;
-        probe.append(tile);
-        return cssUrlToSrc(getComputedStyle(tile).backgroundImage);
-      }).filter(Boolean)
-    )
-  ];
-  probe.remove();
-
-  await Promise.all(
-    urls.map(
-      (src) =>
-        new Promise((resolve, reject) => {
-          const image = new Image();
-          image.onload = () => {
-            if (image.decode) {
-              image.decode().then(resolve, reject);
-            } else {
-              resolve();
-            }
-          };
-          image.onerror = reject;
-          image.src = src;
-        })
-    )
-  );
 }
 
 function updatePrefs(nextPrefs) {
@@ -337,12 +339,15 @@ function bootTransport(transport, options = {}) {
       online: options.online === true,
       onLeaderboardOpen: fetchLeaderboard,
       onPrefsChange: updatePrefs,
+      themes: themeOptions,
       onRename(name) {
         const cleaned = cleanName(name);
-        if (!cleaned) {
+        if (!isValidName(cleaned)) {
+          api?.setRenameError("Enter 1-20 characters.");
           return;
         }
         persistName(cleaned);
+        api?.setRenameStatus("");
         transport.rename?.(cleaned);
       },
       onReconfig(config) {
@@ -364,6 +369,9 @@ function bootTransport(transport, options = {}) {
   });
   transport.on("peer_rename", ({ playerId, name }) => {
     api?.renamePeer(playerId, name);
+    if (api?.getState().you?.playerId === playerId) {
+      api?.setRenameStatus("Username changed.");
+    }
   });
   transport.on("peer_leave", (playerId) => {
     api?.removePeer(playerId);
@@ -385,6 +393,10 @@ function bootTransport(transport, options = {}) {
   });
   transport.on("error", (error) => {
     console.warn("server error", error);
+    if (error.code === "bad_name") {
+      api?.setRenameError(error.message || "Enter 1-20 characters.");
+      return;
+    }
     api?.showNotice(error.message || "Server rejected that change.");
   });
   transport.connect();
@@ -423,11 +435,11 @@ window.addEventListener("hashchange", () => {
   void bootFromHash();
 });
 
-applyPrefs();
-void preloadFlatTiles()
-  .catch((error) => {
-    console.warn("flat tile preload failed", error);
-  })
-  .finally(() => {
+void loadThemeOptions().then((options) => {
+  themeOptions = options;
+  void loadThemeStyles(themeOptions).then(() => {
+    prefs = loadPrefs(themeOptions);
+    applyPrefs();
     void bootFromHash();
   });
+});

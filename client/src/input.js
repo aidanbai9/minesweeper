@@ -109,6 +109,21 @@ export function setupInput(board, api, transport) {
     }
     const state = api.getState();
     if (event.button === 0) {
+      if (event.shiftKey) {
+        event.preventDefault();
+        const action = actionForCell(state, idx, "space");
+        if (!action) {
+          return;
+        }
+        if (action.immediate) {
+          sendAction({ type: action.type, idx: action.idx });
+          return;
+        }
+        held = action;
+        press(action.indices || []);
+        return;
+      }
+
       const action = actionForCell(state, idx, "left");
       if (!action) {
         return;

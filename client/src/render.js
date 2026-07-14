@@ -4,10 +4,6 @@ import { AUTO_FLAG, PRESETS } from "../engine/index.js";
 
 const STATUS = { PENDING: 0, PLAYING: 1, WON: 2, LOST: 3 };
 const CELL_SIZE_OPTIONS = ["100", "150", "200"];
-const THEME_OPTIONS = [
-  ["classic", "Classic"],
-  ["flat", "Flat"]
-];
 const PENDING_TIMEOUT_MS = 1500;
 const PRESET_OPTIONS = [
   ["beginner", "Beginner"],
@@ -60,12 +56,16 @@ function cleanName(name) {
   return name
     .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
     .trim()
-    .replace(/\s+/g, " ")
-    .slice(0, 20);
+    .replace(/\s+/g, " ");
+}
+
+function isValidName(name) {
+  return Boolean(name) && name.length <= 20;
 }
 
 function settingsHtml(state, prefs, options = {}) {
   const preset = presetForConfig(state);
+  const themeOptions = options.themes || [["classic", "Classic"]];
   return `
     <div class="settings-backdrop" hidden>
       <section class="settings-dialog" role="dialog" aria-modal="true" aria-label="settings">
@@ -91,7 +91,7 @@ function settingsHtml(state, prefs, options = {}) {
           <fieldset>
             <legend>Theme</legend>
             <div class="segmented">
-              ${THEME_OPTIONS.map(
+              ${themeOptions.map(
                 ([theme, label]) => `
                   <label>
                     <input type="radio" name="theme" value="${theme}"${checked(prefs.theme, theme)}>
@@ -105,8 +105,9 @@ function settingsHtml(state, prefs, options = {}) {
             options.canRename
               ? `
                 <form class="rename-form" data-rename-form>
-                  <label>Change username <input name="displayName" type="text" maxlength="20" autocomplete="nickname"></label>
+                  <label>Change username <input name="displayName" type="text" autocomplete="nickname"></label>
                   <p class="name-error" data-rename-error hidden>Enter 1-20 characters.</p>
+                  <p class="name-status" data-rename-status hidden></p>
                   <button type="submit">Change username</button>
                 </form>
               `
@@ -126,6 +127,16 @@ function settingsHtml(state, prefs, options = {}) {
             </div>
             <p class="assist-note">Assists disqualify the shared board from leaderboard ranking.</p>
           </fieldset>
+        </section>
+        <section class="settings-section">
+          <h3>Controls</h3>
+          <dl class="controls-reference">
+            <div><dt>Left click</dt><dd>reveal, or chord on a number</dd></div>
+            <div><dt>Right click</dt><dd>flag</dd></div>
+            <div><dt>Middle click</dt><dd>chord</dd></div>
+            <div><dt>Shift + click</dt><dd>flag, or chord on a number</dd></div>
+            <div><dt>Space</dt><dd>flag, or chord on a number</dd></div>
+          </dl>
         </section>
         <section class="settings-section">
           <h3>Game</h3>
@@ -315,7 +326,7 @@ export function mountGame(root, initialState, handlers) {
         <div class="peer-strip"></div>
       </section>
     </main>
-    ${settingsHtml(state, prefs, { canRename: handlers.online === true && typeof handlers.onRename === "function" })}
+    ${settingsHtml(state, prefs, { canRename: typeof handlers.onRename === "function", themes: handlers.themes })}
     ${resultHtml()}
     ${leaderboardHtml()}
   `;
@@ -366,6 +377,7 @@ export function mountGame(root, initialState, handlers) {
   const renameForm = settingsBackdrop.querySelector("[data-rename-form]");
   const displayNameInput = settingsBackdrop.querySelector('[name="displayName"]');
   const renameError = settingsBackdrop.querySelector("[data-rename-error]");
+  const renameStatus = settingsBackdrop.querySelector("[data-rename-status]");
   let pendingConfig = null;
   let activeLeaderboardPreset = presetForConfig(state) === "custom" ? "expert" : presetForConfig(state);
   let leaderboardBoards = null;
@@ -422,6 +434,9 @@ export function mountGame(root, initialState, handlers) {
     }
     if (renameError) {
       renameError.hidden = true;
+    }
+    if (renameStatus) {
+      renameStatus.hidden = true;
     }
     clearConfirm();
     updateGameValidation();
@@ -615,6 +630,9 @@ export function mountGame(root, initialState, handlers) {
       if (renameError) {
         renameError.hidden = true;
       }
+      if (renameStatus) {
+        renameStatus.hidden = true;
+      }
       return;
     }
     if (!event.target?.matches?.("[data-config-input]")) {
@@ -646,9 +664,13 @@ export function mountGame(root, initialState, handlers) {
     }
     event.preventDefault();
     const name = cleanName(displayNameInput?.value);
-    if (!name) {
+    if (!isValidName(name)) {
       if (renameError) {
+        renameError.textContent = "Enter 1-20 characters.";
         renameError.hidden = false;
+      }
+      if (renameStatus) {
+        renameStatus.hidden = true;
       }
       displayNameInput?.focus();
       return;
@@ -696,13 +718,13 @@ export function mountGame(root, initialState, handlers) {
   window.addEventListener("keydown", onWindowKeyDown);
   updateGameValidation();
 
-  function flagColor(idx) {
+  function flagOwnerClass(idx) {
     const flag = state.flags[idx];
     if (flag === AUTO_FLAG || presence.peerCount() < 2) {
       return null;
     }
     const owner = flag - 1;
-    return owner < 0 ? null : presence.colorFor(owner);
+    return owner < 0 ? null : `peer-flag-owner-${owner % 8}`;
   }
 
   function updateCell(idx) {
@@ -719,8 +741,6 @@ export function mountGame(root, initialState, handlers) {
     cell.className = "cell";
     cell.innerHTML = "";
     delete cell.dataset.count;
-    cell.style.removeProperty("--flag-cloth");
-    cell.style.removeProperty("--flag-owner-color");
 
     if (isWrong) {
       cell.classList.add("revealed", "wrong-flag");
@@ -736,11 +756,9 @@ export function mountGame(root, initialState, handlers) {
       if (isWonMine) {
         cell.classList.add("correct-flag");
       }
-      const color = flagColor(idx);
-      if (color) {
-        cell.classList.add("peer-flag");
-        cell.style.setProperty("--flag-cloth", color);
-        cell.style.setProperty("--flag-owner-color", color);
+      const ownerClass = flagOwnerClass(idx);
+      if (ownerClass) {
+        cell.classList.add("peer-flag", ownerClass);
       }
       cell.innerHTML = isWonMine ? correctFlagSvg() : flagSvg();
     } else if (isPending && !isRevealed) {
@@ -1029,6 +1047,26 @@ export function mountGame(root, initialState, handlers) {
       }
     },
     showNotice,
+    setRenameError(message) {
+      if (renameError) {
+        renameError.textContent = message || "Unable to change username.";
+        renameError.hidden = false;
+      }
+      if (renameStatus) {
+        renameStatus.hidden = true;
+      }
+      displayNameInput?.focus();
+    },
+    setRenameStatus(message) {
+      if (!renameStatus) {
+        return;
+      }
+      renameStatus.textContent = message || "";
+      renameStatus.hidden = !message;
+      if (renameError) {
+        renameError.hidden = true;
+      }
+    },
     setPrefs(nextPrefs) {
       prefs = { ...prefs, ...nextPrefs };
       if (!settingsBackdrop.hidden) {

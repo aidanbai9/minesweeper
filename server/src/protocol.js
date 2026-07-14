@@ -80,7 +80,7 @@ export function validateInbound(value, totalCells) {
       return { ok: false, code: "bad_token", message: "Session token must be a string" };
     }
     const name = cleanName(value.name);
-    if (value.name !== undefined && !name) {
+    if (value.name !== undefined && (!name || name.length > 20)) {
       return { ok: false, code: "bad_name", message: "Name must be 1-20 characters" };
     }
     return { ok: true, value: { v: VERSION, t: "HELLO", name, token: cleanToken(value.token) } };
@@ -91,7 +91,7 @@ export function validateInbound(value, totalCells) {
       return { ok: false, code: "bad_name", message: "Name must be a string" };
     }
     const name = cleanName(value.name);
-    if (!name) {
+    if (!name || name.length > 20) {
       return { ok: false, code: "bad_name", message: "Name must be 1-20 characters" };
     }
     return { ok: true, value: { v: VERSION, t: "RENAME", name } };
@@ -173,8 +173,7 @@ export function cleanName(name) {
   return name
     .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
     .trim()
-    .replace(/\s+/g, " ")
-    .slice(0, 20);
+    .replace(/\s+/g, " ");
 }
 
 export function cleanToken(token) {

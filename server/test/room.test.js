@@ -467,6 +467,8 @@ describe("GameRoom", () => {
     const error = await a.next((message) => message.t === "ERROR");
 
     expect(error.code).toBe("bad_name");
+    a.send({ t: "RENAME", name: "a".repeat(30) });
+    expect((await a.next((message) => message.t === "ERROR")).code).toBe("bad_name");
     expect(await a.noMessage((message) => message.t === "PEER_RENAME")).toBe(true);
     expect(await leaderboardEntries("beginner")).toEqual(before);
 

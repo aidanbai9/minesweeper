@@ -1,77 +1,19 @@
 :root {
   /*
-   * Scale and derived dimensions. User preferences may change --scale; theme
-   * files must not override it.
+   * Shared scale. User preferences may change --scale; theme files must not
+   * override it. Board and chrome dimensions both derive from this value.
    */
   --scale: 1;
+
+  /*
+   * Board theme contract. Theme files may override only these board variables
+   * and may add [data-theme="x"] .cell/.board rules for tile images or icon
+   * rendering. Classic's board defaults are defined here.
+   */
   --cell: calc(16px * var(--scale));
   --bevel: calc(2px * var(--scale));
-  --panel-bevel: calc(3px * var(--scale));
   --thin-bevel: calc(1px * var(--scale));
   --num: calc(13px * var(--scale));
-  --text: calc(12px * var(--scale));
-  --title: calc(22px * var(--scale));
-  --settings-title: calc(18px * var(--scale));
-  --shell-pad: calc(16px * var(--scale));
-  --mobile-pad: calc(8px * var(--scale));
-  --gap: calc(8px * var(--scale));
-  --small-gap: calc(4px * var(--scale));
-  --tiny-gap: calc(3px * var(--scale));
-  --panel-pad: calc(8px * var(--scale));
-  --header-pad: calc(5px * var(--scale));
-  --button-min-h: calc(28px * var(--scale));
-  --button-pad-y: calc(3px * var(--scale));
-  --button-pad-x: calc(8px * var(--scale));
-  --face: calc(26px * var(--scale));
-  --face-line: calc(20px * var(--scale));
-  --tool-button: calc(22px * var(--scale));
-  --peer-dot: calc(8px * var(--scale));
-  --peer-strip-min: calc(24px * var(--scale));
-  --banner-pad-x: calc(10px * var(--scale));
-  --board-max-w-gap: calc(40px * var(--scale));
-  --board-max-h-gap: calc(130px * var(--scale));
-  --menu-panel-width: calc(360px * var(--scale));
-  --settings-width: calc(420px * var(--scale));
-  --dialog-margin: calc(24px * var(--scale));
-  --led-gap: calc(2px * var(--scale));
-  --led-height: calc(32px * var(--scale));
-  --led-pad-y: calc(2px * var(--scale));
-  --led-pad-x: calc(3px * var(--scale));
-  --led-digit-w: calc(18px * var(--scale));
-  --led-digit-h: calc(28px * var(--scale));
-  --led-seg-long: calc(10px * var(--scale));
-  --led-seg-thick: calc(3px * var(--scale));
-  --led-seg-left: calc(4px * var(--scale));
-  --led-seg-edge: calc(1px * var(--scale));
-  --led-seg-top: calc(3px * var(--scale));
-  --led-seg-mid: calc(12px * var(--scale));
-
-  /* app and text */
-  --app-bg: #008080;
-  --text-fg: #000000;
-  --face-fg: #000000;
-  --muted-fg: #7b7b7b;
-  --overlay-bg: rgba(0, 0, 0, 0.35);
-  --notice-bg: #ffffcc;
-  --notice-border: #000000;
-  --input-bg: #ffffff;
-  --input-fg: #000000;
-  --leaderboard-bg: #ffffff;
-  --leaderboard-border: #c0c0c0;
-  --error-fg: #800000;
-
-  /* surfaces */
-  --panel-bg: #c0c0c0;
-  --panel-bevel-light: #ffffff;
-  --panel-bevel-dark: #7b7b7b;
-  --panel-bevel-width: var(--panel-bevel);
-  --panel-inset-light: #ffffff;
-  --panel-inset-dark: #7b7b7b;
-
-  --button-bg: #c0c0c0;
-  --button-bevel-light: #ffffff;
-  --button-bevel-dark: #7b7b7b;
-  --button-bevel-width: var(--bevel);
 
   --cell-covered-bg: #c0c0c0;
   --cell-revealed-bg: #c0c0c0;
@@ -84,7 +26,6 @@
   --cell-bevel-dark: #7b7b7b;
   --cell-bevel-width: var(--bevel);
 
-  /* numbers */
   --num-1-fg: #0000ff;
   --num-2-fg: #008000;
   --num-3-fg: #ff0000;
@@ -106,7 +47,6 @@
   --num-font: Arial, Helvetica, sans-serif;
   --num-weight: 700;
 
-  /* icons */
   --mine-body: #000000;
   --mine-highlight: #ffffff;
   --mine-cell-bg: var(--cell-revealed-bg);
@@ -116,13 +56,11 @@
   --wrongflag-mark: #ff0000;
   --correctflag-mark: transparent;
 
-  /* chrome */
-  --led-on: #ff0000;
-  --led-off: #3f0000;
-  --led-bg: #000000;
-  --face-bg: #c0c0c0;
-
-  /* peer fallback colours */
+  /*
+   * Peer colours are used for board ownership marks on flags. Chrome may also
+   * display the same colours in the peer strip, but themes must not override
+   * these values.
+   */
   --peer-0: #0000ff;
   --peer-1: #008000;
   --peer-2: #800080;

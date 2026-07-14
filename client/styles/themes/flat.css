@@ -16,29 +16,6 @@
   --flat-tile-correct-flag: url("../../assets/themes/flat/light_tile_start_1.png");
   --flat-tile-uncovered: url("../../assets/themes/flat/uncovered_tile_1.png");
 
-  --app-bg: #4d5961;
-  --text-fg: #f2f2f2;
-  --face-fg: #111111;
-  --muted-fg: #6b7280;
-  --notice-bg: #fff7b8;
-  --notice-border: #151515;
-  --input-bg: #20252a;
-  --input-fg: #f2f2f2;
-  --leaderboard-bg: #2f3439;
-  --leaderboard-border: #51585f;
-
-  --panel-bg: #252a2e;
-  --panel-bevel-light: #252a2e;
-  --panel-bevel-dark: #252a2e;
-  --panel-bevel-width: 0px;
-  --panel-inset-light: #3c4248;
-  --panel-inset-dark: #3c4248;
-
-  --button-bg: #3b4248;
-  --button-bevel-light: #3b4248;
-  --button-bevel-dark: #3b4248;
-  --button-bevel-width: 0px;
-
   --cell-covered-bg: #bdbdbd;
   --cell-revealed-bg: #d4d4d4;
   --cell-pressed-bg: #ababab;
@@ -80,10 +57,6 @@
   --wrongflag-mark: #d40018;
   --correctflag-mark: #00a651;
 
-  --led-on: #ff3131;
-  --led-off: #4b1515;
-  --led-bg: #111111;
-  --face-bg: #f3c646;
 }
 
 [data-theme="flat"] .cell {
@@ -170,8 +143,36 @@
   background-image: var(--flat-tile-detonated);
 }
 
-[data-theme="flat"] .cell.peer-flag {
-  box-shadow: inset 0 0 0 calc(2px * var(--scale)) var(--flag-owner-color);
+[data-theme="flat"] .cell.peer-flag-owner-0 {
+  box-shadow: inset 0 0 0 calc(2px * var(--scale)) var(--peer-0);
+}
+
+[data-theme="flat"] .cell.peer-flag-owner-1 {
+  box-shadow: inset 0 0 0 calc(2px * var(--scale)) var(--peer-1);
+}
+
+[data-theme="flat"] .cell.peer-flag-owner-2 {
+  box-shadow: inset 0 0 0 calc(2px * var(--scale)) var(--peer-2);
+}
+
+[data-theme="flat"] .cell.peer-flag-owner-3 {
+  box-shadow: inset 0 0 0 calc(2px * var(--scale)) var(--peer-3);
+}
+
+[data-theme="flat"] .cell.peer-flag-owner-4 {
+  box-shadow: inset 0 0 0 calc(2px * var(--scale)) var(--peer-4);
+}
+
+[data-theme="flat"] .cell.peer-flag-owner-5 {
+  box-shadow: inset 0 0 0 calc(2px * var(--scale)) var(--peer-5);
+}
+
+[data-theme="flat"] .cell.peer-flag-owner-6 {
+  box-shadow: inset 0 0 0 calc(2px * var(--scale)) var(--peer-6);
+}
+
+[data-theme="flat"] .cell.peer-flag-owner-7 {
+  box-shadow: inset 0 0 0 calc(2px * var(--scale)) var(--peer-7);
 }
 
 [data-theme="flat"] .cell .flag-svg,
