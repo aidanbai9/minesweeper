@@ -131,8 +131,10 @@ function promptForOnlineName() {
 
 function normalizePrefs(value = {}) {
   const cellSize = ["100", "150", "200"].includes(String(value.cellSize)) ? String(value.cellSize) : "100";
+  const theme = ["classic", "flat"].includes(String(value.theme)) ? String(value.theme) : "classic";
   return {
     cellSize,
+    theme,
     autoChord: value.autoChord === true,
     autoFlag: value.autoFlag === true
   };
@@ -159,6 +161,7 @@ function loadPrefs() {
 function applyPrefs() {
   const scale = { 100: "1", 150: "1.5", 200: "2" }[prefs.cellSize] || "1";
   document.documentElement.style.setProperty("--scale", scale);
+  document.documentElement.dataset.theme = prefs.theme;
 }
 
 function updatePrefs(nextPrefs) {

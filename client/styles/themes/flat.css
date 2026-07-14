@@ -1,0 +1,70 @@
+[data-theme="flat"] {
+  --app-bg: #4d5961;
+  --text-fg: #f2f2f2;
+  --face-fg: #111111;
+  --muted-fg: #6b7280;
+  --notice-bg: #fff7b8;
+  --notice-border: #151515;
+  --input-bg: #20252a;
+  --input-fg: #f2f2f2;
+  --leaderboard-bg: #2f3439;
+  --leaderboard-border: #51585f;
+
+  --panel-bg: #252a2e;
+  --panel-bevel-light: #252a2e;
+  --panel-bevel-dark: #252a2e;
+  --panel-bevel-width: 0px;
+  --panel-inset-light: #3c4248;
+  --panel-inset-dark: #3c4248;
+
+  --button-bg: #3b4248;
+  --button-bevel-light: #3b4248;
+  --button-bevel-dark: #3b4248;
+  --button-bevel-width: 0px;
+
+  --cell-covered-bg: #bdbdbd;
+  --cell-revealed-bg: #d4d4d4;
+  --cell-pressed-bg: #ababab;
+  --cell-border: #8d8d8d;
+  --cell-border-width: 0px;
+  --grid-line: #8f8f8f;
+  --grid-line-width: calc(1px * var(--scale));
+  --cell-bevel-light: #bdbdbd;
+  --cell-bevel-dark: #bdbdbd;
+  --cell-bevel-width: 0px;
+
+  --num-1-fg: #ffffff;
+  --num-2-fg: #ffffff;
+  --num-3-fg: #ffffff;
+  --num-4-fg: #ffffff;
+  --num-5-fg: #ffffff;
+  --num-6-fg: #ffffff;
+  --num-7-fg: #ffffff;
+  --num-8-fg: #ffffff;
+  --num-1-bg: #006fe6;
+  --num-2-bg: #15803d;
+  --num-3-bg: #ffd400;
+  --num-4-bg: #ff8a00;
+  --num-5-bg: #d71920;
+  --num-6-bg: #7c3aed;
+  --num-7-bg: #111111;
+  --num-8-bg: #6f7a85;
+  --num-stroke: #1a1a1a;
+  --num-stroke-width: calc(0.55px * var(--scale));
+  --num-font: Arial, Helvetica, sans-serif;
+  --num-weight: 800;
+
+  --mine-body: #050505;
+  --mine-highlight: #ffffff;
+  --mine-cell-bg: #e23b3b;
+  --mine-detonated-bg: #b90016;
+  --flag-cloth: #e00020;
+  --flag-pole: #242424;
+  --wrongflag-mark: #d40018;
+  --correctflag-mark: #00a651;
+
+  --led-on: #ff3131;
+  --led-off: #4b1515;
+  --led-bg: #111111;
+  --face-bg: #f3c646;
+}

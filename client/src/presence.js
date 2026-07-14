@@ -1,33 +1,25 @@
 import { AUTO_FLAG } from "../engine/index.js";
 
-export const CLASSIC_FLAG_COLOR = "#ff0000";
-export const PEER_PALETTE = Object.freeze([
-  "#0000ff",
-  "#008000",
-  "#800080",
-  "#008080",
-  "#800000",
-  "#000080",
-  "#808000",
-  "#ff7f00"
-]);
+const PEER_COUNT = 8;
+
+export function peerFallbackColor(playerId) {
+  if (!Number.isInteger(playerId)) {
+    return "black";
+  }
+  const index = ((playerId % PEER_COUNT) + PEER_COUNT) % PEER_COUNT;
+  return getComputedStyle(document.documentElement).getPropertyValue(`--peer-${index}`).trim() || "black";
+}
 
 export function createPresence(cells, peerListEl) {
   const peers = new Map();
   const cursors = new Map();
   let currentYouId = null;
 
-  function isClassicFlagRed(color) {
-    return color?.toLowerCase() === "#ff0000" || color?.toLowerCase() === "#f00";
-  }
-
   function colorFor(playerId) {
     if (playerId === AUTO_FLAG || playerId === AUTO_FLAG - 1) {
-      return CLASSIC_FLAG_COLOR;
+      return getComputedStyle(document.documentElement).getPropertyValue("--flag-cloth").trim() || "red";
     }
-    const fallback = Number.isInteger(playerId) ? PEER_PALETTE[playerId % PEER_PALETTE.length] : "#000000";
-    const color = peers.get(playerId)?.color || fallback;
-    return isClassicFlagRed(color) ? fallback : color;
+    return peers.get(playerId)?.color || peerFallbackColor(playerId);
   }
 
   function peerCount() {

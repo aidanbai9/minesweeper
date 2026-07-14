@@ -48,7 +48,7 @@ export function createChrome(root, handlers = {}) {
     <button class="face" type="button" aria-label="reset">:)</button>
     <div class="counter led" data-role="time" aria-label="elapsed seconds"></div>
     <button class="leaderboard-button" type="button" aria-label="leaderboard">LB</button>
-    <button class="settings-button" type="button" aria-label="settings">&#9881;</button>
+    <button class="settings-button" type="button" aria-label="settings">⚙</button>
   `;
   const mines = root.querySelector('[data-role="mines"]');
   const time = root.querySelector('[data-role="time"]');

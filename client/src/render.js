@@ -1,10 +1,13 @@
 import { createChrome } from "./chrome.js";
-import { CLASSIC_FLAG_COLOR, createPresence } from "./presence.js";
+import { createPresence } from "./presence.js";
 import { AUTO_FLAG, PRESETS } from "../engine/index.js";
 
 const STATUS = { PENDING: 0, PLAYING: 1, WON: 2, LOST: 3 };
-const NUMBER_CLASSES = ["", "n1", "n2", "n3", "n4", "n5", "n6", "n7", "n8"];
 const CELL_SIZE_OPTIONS = ["100", "150", "200"];
+const THEME_OPTIONS = [
+  ["classic", "Classic"],
+  ["flat", "Flat"]
+];
 const PENDING_TIMEOUT_MS = 1500;
 const PRESET_OPTIONS = [
   ["beginner", "Beginner"],
@@ -80,6 +83,19 @@ function settingsHtml(state, prefs, options = {}) {
                   <label>
                     <input type="radio" name="cellSize" value="${size}"${checked(prefs.cellSize, size)}>
                     <span>${size}%</span>
+                  </label>
+                `
+              ).join("")}
+            </div>
+          </fieldset>
+          <fieldset>
+            <legend>Theme</legend>
+            <div class="segmented">
+              ${THEME_OPTIONS.map(
+                ([theme, label]) => `
+                  <label>
+                    <input type="radio" name="theme" value="${theme}"${checked(prefs.theme, theme)}>
+                    <span>${label}</span>
                   </label>
                 `
               ).join("")}
@@ -182,12 +198,21 @@ function inputInteger(input) {
   return Number.isInteger(value) ? value : NaN;
 }
 
-function flagSvg(color = CLASSIC_FLAG_COLOR) {
+function flagSvg() {
   return `
-    <svg class="flag-svg" viewBox="0 0 16 16" aria-hidden="true" style="--flag-color:${color}">
-      <path d="M5 3h1v9H5z" fill="#000"/>
-      <path d="M4 12h7v2H3v-1z" fill="#000"/>
+    <svg class="flag-svg" viewBox="0 0 16 16" aria-hidden="true">
+      <path class="flag-pole" d="M5 3h1v9H5z"/>
+      <path class="flag-base" d="M4 12h7v2H3v-1z"/>
       <path class="flag-cloth" d="M6 3l7 3-7 3z"/>
+    </svg>
+  `;
+}
+
+function correctFlagSvg() {
+  return `
+    ${flagSvg()}
+    <svg class="correct-mark" viewBox="0 0 16 16" aria-hidden="true">
+      <path d="M3 8.5l3 3L13 4" fill="none" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"/>
     </svg>
   `;
 }
@@ -195,9 +220,9 @@ function flagSvg(color = CLASSIC_FLAG_COLOR) {
 function mineSvg(extra = "") {
   return `
     <svg class="mine-svg ${extra}" viewBox="0 0 16 16" aria-hidden="true">
-      <path d="M8 1v14M1 8h14M3 3l10 10M13 3L3 13" stroke="#000" stroke-width="1.5"/>
-      <circle cx="8" cy="8" r="4.5" fill="#000"/>
-      <circle cx="6.5" cy="6.5" r="1" fill="#fff"/>
+      <path class="mine-spikes" d="M8 1v14M1 8h14M3 3l10 10M13 3L3 13" stroke-width="1.5"/>
+      <circle class="mine-body" cx="8" cy="8" r="4.5"/>
+      <circle class="mine-highlight" cx="6.5" cy="6.5" r="1"/>
     </svg>
   `;
 }
@@ -206,7 +231,7 @@ function wrongFlagSvg() {
   return `
     ${mineSvg()}
     <svg class="wrong-x" viewBox="0 0 16 16" aria-hidden="true">
-      <path d="M2 2l12 12M14 2L2 14" stroke="#f00" stroke-width="2"/>
+      <path d="M2 2l12 12M14 2L2 14" stroke-width="2"/>
     </svg>
   `;
 }
@@ -268,7 +293,7 @@ export function stateFromSnapshot(snapshot) {
 
 export function mountGame(root, initialState, handlers) {
   let state = initialState;
-  let prefs = { cellSize: "100", autoChord: false, autoFlag: false, ...(handlers.prefs || {}) };
+  let prefs = { cellSize: "100", theme: "classic", autoChord: false, autoFlag: false, ...(handlers.prefs || {}) };
   let held = false;
   let timer = 0;
   let renderFrame = 0;
@@ -387,6 +412,7 @@ export function mountGame(root, initialState, handlers) {
 
   function syncSettingsForm() {
     setRadio("cellSize", prefs.cellSize);
+    setRadio("theme", prefs.theme);
     setCheckbox("autoChord", prefs.autoChord);
     setCheckbox("autoFlag", prefs.autoFlag);
     setRadio("preset", presetForConfig(state));
@@ -569,6 +595,9 @@ export function mountGame(root, initialState, handlers) {
     if (target.name === "cellSize") {
       prefs = { ...prefs, cellSize: target.value };
       handlers.onPrefsChange?.({ cellSize: target.value });
+    } else if (target.name === "theme") {
+      prefs = { ...prefs, theme: target.value };
+      handlers.onPrefsChange?.({ theme: target.value });
     } else if (target.name === "autoChord" || target.name === "autoFlag") {
       prefs = { ...prefs, [target.name]: target.checked };
       handlers.onPrefsChange?.({ [target.name]: target.checked });
@@ -670,10 +699,10 @@ export function mountGame(root, initialState, handlers) {
   function flagColor(idx) {
     const flag = state.flags[idx];
     if (flag === AUTO_FLAG || presence.peerCount() < 2) {
-      return CLASSIC_FLAG_COLOR;
+      return null;
     }
     const owner = flag - 1;
-    return owner < 0 ? CLASSIC_FLAG_COLOR : presence.colorFor(owner);
+    return owner < 0 ? null : presence.colorFor(owner);
   }
 
   function updateCell(idx) {
@@ -689,6 +718,8 @@ export function mountGame(root, initialState, handlers) {
 
     cell.className = "cell";
     cell.innerHTML = "";
+    delete cell.dataset.count;
+    cell.style.removeProperty("--flag-cloth");
 
     if (isWrong) {
       cell.classList.add("revealed", "wrong-flag");
@@ -701,13 +732,17 @@ export function mountGame(root, initialState, handlers) {
       cell.innerHTML = mineSvg();
     } else if (flagged && !isRevealed) {
       cell.classList.add("unrevealed", "flagged");
-      cell.innerHTML = flagSvg(flagColor(idx));
+      const color = flagColor(idx);
+      if (color) {
+        cell.style.setProperty("--flag-cloth", color);
+      }
+      cell.innerHTML = isWonMine ? correctFlagSvg() : flagSvg();
     } else if (isPending && !isRevealed) {
       cell.classList.add("pending");
     } else if (isRevealed) {
       cell.classList.add("revealed");
+      cell.dataset.count = String(count);
       if (count > 0) {
-        cell.classList.add(NUMBER_CLASSES[count]);
         cell.textContent = String(count);
       }
     } else {
