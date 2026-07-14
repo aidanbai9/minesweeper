@@ -22,6 +22,28 @@ function chordPressedCells(state, idx) {
   return neighbors(idx, state.w, state.h).filter((n) => !state.revealed[n] && !state.flags[n]);
 }
 
+function actionForCell(state, idx, button) {
+  if (idx < 0) {
+    return null;
+  }
+
+  if (!state.revealed[idx]) {
+    if (button === "space") {
+      return { type: "FLAG", idx, immediate: true };
+    }
+    if (button === "left" && !state.flags[idx]) {
+      return { type: "REVEAL", idx, indices: [idx] };
+    }
+    return null;
+  }
+
+  if (state.counts[idx] > 0) {
+    return { type: "CHORD", idx, indices: chordPressedCells(state, idx) };
+  }
+
+  return null;
+}
+
 export function setupInput(board, api, transport) {
   let held = null;
   let hovered = -1;
@@ -87,13 +109,12 @@ export function setupInput(board, api, transport) {
     }
     const state = api.getState();
     if (event.button === 0) {
-      const indices = !state.revealed[idx] && !state.flags[idx] ? [idx] : [];
-      held = { type: "REVEAL", idx, indices };
-      if (!state.revealed[idx] && !state.flags[idx]) {
-        press(indices);
-      } else {
-        api.setHeld(true);
+      const action = actionForCell(state, idx, "left");
+      if (!action) {
+        return;
       }
+      held = action;
+      press(action.indices || []);
     } else if (event.button === 1) {
       event.preventDefault();
       const indices = chordPressedCells(state, idx);
@@ -136,15 +157,16 @@ export function setupInput(board, api, transport) {
       return;
     }
     const state = api.getState();
-    if (!state.revealed[idx]) {
-      sendAction({ type: "FLAG", idx });
+    const action = actionForCell(state, idx, "space");
+    if (!action) {
       return;
     }
-    if (state.counts[idx] > 0) {
-      const indices = chordPressedCells(state, idx);
-      held = { type: "CHORD", idx, keyboard: true, indices };
-      press(indices);
+    if (action.immediate) {
+      sendAction({ type: action.type, idx: action.idx });
+      return;
     }
+    held = { ...action, keyboard: true };
+    press(action.indices || []);
   }
 
   function onKeyUp(event) {
