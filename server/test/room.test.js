@@ -187,6 +187,20 @@ async function winBeginnerRoom({ code, name, token, startedAt = 1000 }) {
   return socket;
 }
 
+async function winBeginnerRoomWithOutcome({ code, name, token, startedAt }) {
+  const socket = await connect(code, `?seed=${code}&w=9&h=9&m=10`);
+  await socket.next((message) => message.t === "SNAPSHOT");
+  await setName(socket, name, token);
+
+  const { state, lastSafe } = presetWinState({ w: 9, h: 9, mineCount: 10, startedAt });
+  await replaceRoomState(code, state);
+
+  socket.send({ t: "ACTION", action: { type: "REVEAL", idx: lastSafe } });
+  await socket.next((message) => message.t === "EVENTS" && message.events.some((event) => event.t === "WIN"));
+  const outcome = await socket.next((message) => message.t === "WIN_RECORDED");
+  return { socket, outcome };
+}
+
 describe("state serialization", () => {
   it("round-trips typed arrays through plain stored data", () => {
     const start = createGame({ seed: "roundtrip", w: 9, h: 9, mineCount: 10 });
@@ -809,6 +823,51 @@ describe("GameRoom", () => {
     expect(entries[0].contributors).toEqual([{ name: "Solo", token: "tok-solo" }]);
 
     a.close();
+  });
+
+  it("broadcasts outside_top_50 for an eligible win slower than the board", async () => {
+    const lb = env.LEADERBOARD.getByName("global");
+    for (let i = 0; i < 50; i += 1) {
+      await lb.recordWin({
+        timeMs: 1000 + i,
+        contributors: [{ name: `Player ${i}`, token: `tok-player-${i}` }],
+        preset: "beginner",
+        finishedAt: 100000 + i
+      });
+    }
+
+    const { socket, outcome } = await winBeginnerRoomWithOutcome({
+      code: "slowrank",
+      name: "Slow",
+      token: "tok-slowrank",
+      startedAt: Date.now() - 5000
+    });
+
+    expect(outcome).toMatchObject({ t: "WIN_RECORDED", ranked: false, reason: "outside_top_50" });
+    expect(outcome.cap).toBeUndefined();
+    socket.close();
+  });
+
+  it("broadcasts outside_personal_best for a globally rankable capped solo win", async () => {
+    const lb = env.LEADERBOARD.getByName("global");
+    for (let i = 0; i < 6; i += 1) {
+      await lb.recordWin({
+        timeMs: 1000 + i,
+        contributors: [{ name: "Ada", token: `tok-ada-cap-${i}` }],
+        preset: "beginner",
+        finishedAt: 100000 + i
+      });
+    }
+
+    const { socket, outcome } = await winBeginnerRoomWithOutcome({
+      code: "caprank2",
+      name: "Ada",
+      token: "tok-ada-cap-slow",
+      startedAt: Date.now() - 2000
+    });
+
+    expect(outcome).toMatchObject({ t: "WIN_RECORDED", ranked: false, reason: "outside_personal_best", cap: 6 });
+    socket.close();
   });
 
   it("records a no-guess preset win on the no-guess board only", async () => {

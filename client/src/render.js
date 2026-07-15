@@ -40,6 +40,10 @@ function presetLabel(key) {
   return PRESET_OPTIONS.find(([preset]) => preset === key)?.[1] || "Custom";
 }
 
+function modeLabel(noGuess) {
+  return NO_GUESS_ENABLED && noGuess === true ? "No-guess" : "Standard";
+}
+
 function formatPreciseMs(timeMs) {
   return (Math.max(0, timeMs) / 1000).toFixed(2);
 }
@@ -586,10 +590,13 @@ export function mountGame(root, initialState, handlers) {
     }
     const outcome = state.winOutcome;
     if (outcome?.t === "WIN_RECORDED") {
-      if (outcome.rank) {
-        return `${formatRank(outcome.rank)} on ${presetLabel(presetForConfig(state))}!`;
+      if (outcome.ranked && outcome.rank) {
+        return `${formatRank(outcome.rank)} on ${presetLabel(presetForConfig(state))} ${modeLabel(state.noGuess)}!`;
       }
-      return "Not ranked: outside the top 50.";
+      if (outcome.reason === "outside_personal_best") {
+        return `Not ranked — outside your personal top ${outcome.cap || 6} for this board.`;
+      }
+      return "Not ranked — outside the top 50.";
     }
     if (outcome?.t === "WIN_INELIGIBLE") {
       return outcome.reason === "assist"

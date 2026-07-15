@@ -118,31 +118,44 @@ function trimBoardEntries(entries) {
   return kept;
 }
 
+function wouldPlaceGlobally(entries, entry) {
+  return [...entries, entry].sort(sortEntries).slice(0, MAX_ENTRIES).includes(entry);
+}
+
 function applyContributorCap(entries, entry) {
   let kept = [...entries];
-  for (const name of contributorNames(entry)) {
+  const acceptedContributors = [];
+  for (const contributor of entry.contributors) {
+    const name = contributor.name;
     const existing = kept.filter((item) => hasContributor(item, name));
     const evictCount = existing.length + 1 - MAX_ENTRIES_PER_CONTRIBUTOR;
     if (evictCount <= 0) {
+      acceptedContributors.push(contributor);
       continue;
     }
 
     const evicted = existing.sort(sortEntriesSlowestFirst).slice(0, evictCount);
     if (evicted.some((item) => !isFasterThan(entry, item))) {
-      return null;
+      continue;
     }
 
     const evictedSet = new Set(evicted);
     kept = kept.filter((item) => !evictedSet.has(item));
+    acceptedContributors.push(contributor);
   }
 
-  for (const name of contributorNames(entry)) {
+  if (acceptedContributors.length === 0) {
+    return null;
+  }
+
+  const cappedEntry = { ...entry, contributors: acceptedContributors };
+  for (const name of contributorNames(cappedEntry)) {
     if (kept.filter((item) => hasContributor(item, name)).length + 1 > MAX_ENTRIES_PER_CONTRIBUTOR) {
       return null;
     }
   }
 
-  return kept;
+  return { entries: kept, entry: cappedEntry };
 }
 
 function publicEntry(entry) {
@@ -229,21 +242,23 @@ export class Leaderboard extends DurableObject {
     await this.migrateV2();
     const normalized = normalizeEntry(entry);
     const entries = await this.readBoardEntries(normalized.preset, normalized.mode);
-    const topCandidates = [...entries, normalized].sort(sortEntries);
-    if (!topCandidates.slice(0, MAX_ENTRIES).includes(normalized)) {
-      return null;
+    const globallyRankable = wouldPlaceGlobally(entries, normalized);
+    if (!globallyRankable) {
+      return { ranked: false, reason: "outside_top_50" };
     }
 
     const capped = applyContributorCap(entries, normalized);
     if (!capped) {
-      return null;
+      return { ranked: false, reason: "outside_personal_best", cap: MAX_ENTRIES_PER_CONTRIBUTOR };
     }
 
-    const kept = trimBoardEntries([...capped, normalized]);
+    const kept = trimBoardEntries([...capped.entries, capped.entry]);
     await this.writeBoardEntries(normalized.preset, normalized.mode, kept);
 
-    const rank = kept.indexOf(normalized);
-    return rank === -1 ? null : rank + 1;
+    const rank = kept.indexOf(capped.entry);
+    return rank === -1
+      ? { ranked: false, reason: "outside_top_50" }
+      : { ranked: true, rank: rank + 1 };
   }
 
   async getBoards() {

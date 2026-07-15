@@ -452,8 +452,8 @@ export class GameRoom extends DurableObject {
       mode: state.noGuess === true ? "noguess" : "standard",
       finishedAt: state.endedAt
     };
-    const rank = await this.env.LEADERBOARD.getByName("global").recordWin(entry);
-    return { t: "WIN_RECORDED", rank };
+    const result = await this.env.LEADERBOARD.getByName("global").recordWin(entry);
+    return { t: "WIN_RECORDED", ...result };
   }
 
   async renamePlayer(ws, attachment, state, name, now) {

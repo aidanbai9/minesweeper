@@ -109,16 +109,16 @@ describe("Leaderboard", () => {
     ]);
   });
 
-  it("drops a slow entry that does not make the top 50", async () => {
+  it("reports outside_top_50 for a slow entry that does not make the top 50", async () => {
     const lb = leaderboard();
     for (let i = 0; i < 50; i += 1) {
       await lb.recordWin(entry({ timeMs: 1000 + i, finishedAt: 100000 + i, contributors: [contributor(`Player ${i}`)] }));
     }
 
-    const rank = await lb.recordWin(entry({ timeMs: 9999, finishedAt: 999999, contributors: [contributor("Slowpoke")] }));
+    const result = await lb.recordWin(entry({ timeMs: 9999, finishedAt: 999999, contributors: [contributor("Slowpoke")] }));
     const boards = await lb.getBoards();
 
-    expect(rank).toBeNull();
+    expect(result).toEqual({ ranked: false, reason: "outside_top_50" });
     expect(boards.beginner.standard).toHaveLength(50);
     expect(boards.beginner.standard.some((item) => item.timeMs === 9999)).toBe(false);
   });
@@ -179,29 +179,29 @@ describe("Leaderboard", () => {
     expect(await storedEntries("beginner", "standard")).toHaveLength(1);
   });
 
-  it("rejects a contributor's 7th slower time and keeps their 6 faster entries", async () => {
+  it("reports outside_personal_best for a globally rankable 7th slower contributor time", async () => {
     const lb = leaderboard();
     for (let i = 0; i < 6; i += 1) {
       await lb.recordWin(entry({ timeMs: 1000 + i, contributors: [contributor("Ada", `tok-a-${i}`)] }));
     }
 
-    const rank = await lb.recordWin(entry({ timeMs: 2000, contributors: [contributor("Ada", "tok-a-slow")] }));
+    const result = await lb.recordWin(entry({ timeMs: 2000, contributors: [contributor("Ada", "tok-a-slow")] }));
     const boards = await lb.getBoards();
 
-    expect(rank).toBeNull();
+    expect(result).toEqual({ ranked: false, reason: "outside_personal_best", cap: 6 });
     expect(boards.beginner.standard.map((item) => item.timeMs)).toEqual([1000, 1001, 1002, 1003, 1004, 1005]);
   });
 
-  it("accepts a contributor's 7th faster time and evicts their slowest prior entry", async () => {
+  it("ranks a contributor's 7th faster time and evicts their slowest prior entry", async () => {
     const lb = leaderboard();
     for (let i = 0; i < 6; i += 1) {
       await lb.recordWin(entry({ timeMs: 1000 + i, contributors: [contributor("Ada", `tok-a-${i}`)] }));
     }
 
-    const rank = await lb.recordWin(entry({ timeMs: 900, contributors: [contributor("Ada", "tok-a-fast")] }));
+    const result = await lb.recordWin(entry({ timeMs: 900, contributors: [contributor("Ada", "tok-a-fast")] }));
     const boards = await lb.getBoards();
 
-    expect(rank).toBe(1);
+    expect(result).toEqual({ ranked: true, rank: 1 });
     expect(boards.beginner.standard.map((item) => item.timeMs)).toEqual([900, 1000, 1001, 1002, 1003, 1004]);
   });
 
@@ -233,18 +233,19 @@ describe("Leaderboard", () => {
     expect(entries.map((item) => item.timeMs)).not.toContain(2005);
   });
 
-  it("rejects a group entry when one capped contributor already has 6 faster times", async () => {
+  it("ranks a group entry when one capped contributor is blocked but another contributor has room", async () => {
     const lb = leaderboard();
     for (let i = 0; i < 6; i += 1) {
       await lb.recordWin(entry({ timeMs: 1000 + i, contributors: [contributor("Ada", `tok-a-${i}`)] }));
     }
 
-    const rank = await lb.recordWin(entry({ timeMs: 2000, contributors: [contributor("Ada", "tok-a-group"), contributor("Bob")] }));
+    const result = await lb.recordWin(entry({ timeMs: 2000, contributors: [contributor("Ada", "tok-a-group"), contributor("Bob")] }));
     const boards = await lb.getBoards();
 
-    expect(rank).toBeNull();
-    expect(boards.beginner.standard).toHaveLength(6);
-    expect(boards.beginner.standard.some((item) => item.contributors.some((itemContributor) => itemContributor.name === "Bob"))).toBe(false);
+    expect(result).toEqual({ ranked: true, rank: 7 });
+    expect(boards.beginner.standard).toHaveLength(7);
+    expect(boards.beginner.standard.at(-1).contributors).toEqual([{ name: "Bob" }]);
+    expect(boards.beginner.standard.filter((item) => item.contributors.some((itemContributor) => itemContributor.name === "Ada"))).toHaveLength(6);
   });
 
   it("accepts a group entry when one contributor has room and the other evicts a slower entry", async () => {

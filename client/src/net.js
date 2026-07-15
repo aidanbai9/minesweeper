@@ -99,7 +99,13 @@ export function createNetTransport({ code, config, name = "Player", token = "" }
       } else if (message.t === "NOTICE") {
         emitter.emit("notice", message.text);
       } else if (message.t === "WIN_RECORDED") {
-        emitter.emit("win_recorded", { t: message.t, rank: message.rank });
+        emitter.emit("win_recorded", {
+          t: message.t,
+          ranked: message.ranked === true,
+          rank: message.rank,
+          reason: message.reason,
+          cap: message.cap
+        });
       } else if (message.t === "WIN_INELIGIBLE") {
         emitter.emit("win_ineligible", { t: message.t, reason: message.reason });
       } else if (message.t === "ERROR") {
