@@ -6,6 +6,7 @@ const MAX_ENTRIES = 50;
 const MAX_ENTRIES_PER_CONTRIBUTOR = 6;
 const PRESET_KEYS = Object.freeze(Object.keys(PRESETS));
 const MODES = Object.freeze(["standard", "noguess"]);
+const MIGRATED_V2_KEY = "migratedV2";
 
 function normalizeMode(mode) {
   return mode === "noguess" ? "noguess" : "standard";
@@ -13,6 +14,10 @@ function normalizeMode(mode) {
 
 function boardKey(preset, mode = "standard") {
   return `lb:${preset}:${normalizeMode(mode)}`;
+}
+
+function legacyBoardKey(preset) {
+  return `lb:${preset}`;
 }
 
 function normalizeContributor(contributor) {
@@ -72,6 +77,47 @@ function isFasterThan(entry, existing) {
   return entry.timeMs < existing.timeMs;
 }
 
+function entryIdentity(entry) {
+  const contributors = entry.contributors
+    .map((contributor) => `${contributor.name}\u0000${contributor.token}`)
+    .sort()
+    .join("\u0001");
+  return `${entry.timeMs}\u0002${entry.finishedAt}\u0002${contributors}`;
+}
+
+function dedupeEntries(entries) {
+  const seen = new Set();
+  const kept = [];
+  for (const entry of entries) {
+    const identity = entryIdentity(entry);
+    if (seen.has(identity)) {
+      continue;
+    }
+    seen.add(identity);
+    kept.push(entry);
+  }
+  return kept;
+}
+
+function trimBoardEntries(entries) {
+  const contributorCounts = new Map();
+  const kept = [];
+  for (const entry of dedupeEntries(entries).sort(sortEntries)) {
+    const names = contributorNames(entry);
+    if ([...names].some((name) => (contributorCounts.get(name) || 0) >= MAX_ENTRIES_PER_CONTRIBUTOR)) {
+      continue;
+    }
+    kept.push(entry);
+    for (const name of names) {
+      contributorCounts.set(name, (contributorCounts.get(name) || 0) + 1);
+    }
+    if (kept.length >= MAX_ENTRIES) {
+      break;
+    }
+  }
+  return kept;
+}
+
 function applyContributorCap(entries, entry) {
   let kept = [...entries];
   for (const name of contributorNames(entry)) {
@@ -109,10 +155,80 @@ function publicEntry(entry) {
 }
 
 export class Leaderboard extends DurableObject {
+  async readBoardEntries(preset, mode) {
+    const normalizedMode = normalizeMode(mode);
+    return ((await this.ctx.storage.get(boardKey(preset, normalizedMode))) || []).map((entry) =>
+      normalizeEntry({ ...entry, preset, mode: normalizedMode })
+    );
+  }
+
+  async writeBoardEntries(preset, mode, entries, options = {}) {
+    const normalizedMode = normalizeMode(mode);
+    const normalizedEntries = entries.map((entry) => normalizeEntry({ ...entry, preset, mode: normalizedMode }));
+    const storedEntries = options.trim === false ? normalizedEntries.sort(sortEntries).slice(0, MAX_ENTRIES) : trimBoardEntries(normalizedEntries);
+    await this.ctx.storage.put(boardKey(preset, normalizedMode), storedEntries);
+  }
+
+  async migrateV2() {
+    if (await this.ctx.storage.get(MIGRATED_V2_KEY)) {
+      return false;
+    }
+
+    for (const preset of PRESET_KEYS) {
+      const legacyKey = legacyBoardKey(preset);
+      const legacyEntries = ((await this.ctx.storage.get(legacyKey)) || []).map((entry) =>
+        normalizeEntry({ ...entry, preset, mode: "standard" })
+      );
+      if (legacyEntries.length > 0) {
+        const modernEntries = await this.readBoardEntries(preset, "standard");
+        await this.writeBoardEntries(preset, "standard", [...modernEntries, ...legacyEntries]);
+      }
+      await this.ctx.storage.delete(legacyKey);
+    }
+
+    await this.ctx.storage.put(MIGRATED_V2_KEY, true);
+    return true;
+  }
+
+  async debugSnapshot() {
+    const keys = {};
+    for (const [key, value] of await this.ctx.storage.list()) {
+      keys[key] = { count: Array.isArray(value) ? value.length : null };
+    }
+
+    const presets = {};
+    for (const preset of PRESET_KEYS) {
+      const legacy = await this.ctx.storage.get(legacyBoardKey(preset));
+      const standard = await this.ctx.storage.get(boardKey(preset, "standard"));
+      const noguess = await this.ctx.storage.get(boardKey(preset, "noguess"));
+      presets[preset] = {
+        legacy: { key: legacyBoardKey(preset), count: Array.isArray(legacy) ? legacy.length : 0, exists: Array.isArray(legacy) },
+        standard: {
+          key: boardKey(preset, "standard"),
+          count: Array.isArray(standard) ? standard.length : 0,
+          exists: Array.isArray(standard)
+        },
+        noguess: {
+          key: boardKey(preset, "noguess"),
+          count: Array.isArray(noguess) ? noguess.length : 0,
+          exists: Array.isArray(noguess)
+        }
+      };
+    }
+
+    return {
+      temporary: true,
+      readOnly: true,
+      migratedV2: (await this.ctx.storage.get(MIGRATED_V2_KEY)) === true,
+      keys,
+      presets
+    };
+  }
+
   async recordWin(entry) {
+    await this.migrateV2();
     const normalized = normalizeEntry(entry);
-    const key = boardKey(normalized.preset, normalized.mode);
-    const entries = ((await this.ctx.storage.get(key)) || []).map(normalizeEntry);
+    const entries = await this.readBoardEntries(normalized.preset, normalized.mode);
     const topCandidates = [...entries, normalized].sort(sortEntries);
     if (!topCandidates.slice(0, MAX_ENTRIES).includes(normalized)) {
       return null;
@@ -123,21 +239,20 @@ export class Leaderboard extends DurableObject {
       return null;
     }
 
-    const kept = [...capped, normalized].sort(sortEntries).slice(0, MAX_ENTRIES);
-    await this.ctx.storage.put(key, kept);
+    const kept = trimBoardEntries([...capped, normalized]);
+    await this.writeBoardEntries(normalized.preset, normalized.mode, kept);
 
     const rank = kept.indexOf(normalized);
     return rank === -1 ? null : rank + 1;
   }
 
   async getBoards() {
+    await this.migrateV2();
     const boards = {};
     for (const preset of PRESET_KEYS) {
       boards[preset] = {};
       for (const mode of MODES) {
-        const modern = await this.ctx.storage.get(boardKey(preset, mode));
-        const legacy = mode === "standard" ? await this.ctx.storage.get(`lb:${preset}`) : null;
-        const entries = (modern || legacy || []).map((entry) => normalizeEntry({ ...entry, mode }));
+        const entries = await this.readBoardEntries(preset, mode);
         entries.sort(sortEntries);
         boards[preset][mode] = entries.slice(0, MAX_ENTRIES).map(publicEntry);
       }
@@ -146,6 +261,7 @@ export class Leaderboard extends DurableObject {
   }
 
   async renameToken(token, name) {
+    await this.migrateV2();
     const cleanedToken = cleanToken(token);
     const cleanedName = cleanName(name);
     if (!cleanedToken || !cleanedName) {
@@ -155,8 +271,7 @@ export class Leaderboard extends DurableObject {
     let renamed = 0;
     for (const preset of PRESET_KEYS) {
       for (const mode of MODES) {
-        const key = boardKey(preset, mode);
-        const entries = ((await this.ctx.storage.get(key)) || []).map((entry) => normalizeEntry({ ...entry, mode }));
+        const entries = await this.readBoardEntries(preset, mode);
         let changed = false;
         for (const entry of entries) {
           for (const contributor of entry.contributors) {
@@ -171,7 +286,7 @@ export class Leaderboard extends DurableObject {
           // A rename can merge two already-full names and temporarily put one name
           // over the per-board cap. Do not delete entries here; the cap is enforced
           // only when future wins are inserted so renames never silently destroy runs.
-          await this.ctx.storage.put(key, entries.slice(0, MAX_ENTRIES));
+          await this.writeBoardEntries(preset, mode, entries, { trim: false });
         }
       }
     }

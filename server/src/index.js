@@ -42,6 +42,11 @@ export default {
       return json(boards, 200, { "Cache-Control": "public, max-age=30" });
     }
 
+    if (request.method === "GET" && url.pathname === "/leaderboard-debug" && env.LEADERBOARD_DEBUG === "true") {
+      const snapshot = await env.LEADERBOARD.getByName("global").debugSnapshot();
+      return json(snapshot, 200, { "Cache-Control": "no-store", "X-Temporary-Debug-Route": "leaderboard-migration" });
+    }
+
     const match = /^\/room\/([^/]+)$/.exec(url.pathname);
     if (request.method === "GET" && match) {
       const code = match[1];

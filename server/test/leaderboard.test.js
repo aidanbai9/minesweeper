@@ -24,7 +24,66 @@ async function storedEntries(preset, mode = "standard") {
   return (await runInDurableObject(stub, async (_instance, state) => state.storage.get(`lb:${preset}:${mode}`))) || [];
 }
 
+async function storedValue(key) {
+  const stub = leaderboard();
+  return runInDurableObject(stub, async (_instance, state) => state.storage.get(key));
+}
+
+async function putStoredValue(key, value) {
+  const stub = leaderboard();
+  await runInDurableObject(stub, async (_instance, state) => {
+    await state.storage.put(key, value);
+  });
+}
+
 describe("Leaderboard", () => {
+  it("migrates legacy standard entries into modern storage with de-dupe, caps, truncation, and legacy delete", async () => {
+    const lb = leaderboard();
+    await putStoredValue("lb:beginner:standard", [entry({ timeMs: 400, finishedAt: 1, contributors: [contributor("Zoe")] })]);
+    await putStoredValue("lb:beginner", [
+      entry({ timeMs: 500, finishedAt: 2, contributors: [contributor("Ada", "tok-a-500")] }),
+      entry({ timeMs: 500, finishedAt: 2, contributors: [contributor("Ada", "tok-a-500")] }),
+      ...Array.from({ length: 7 }, (_, i) =>
+        entry({ timeMs: 501 + i, finishedAt: 10 + i, contributors: [contributor("Ada", `tok-a-${501 + i}`)] })
+      ),
+      ...Array.from({ length: 60 }, (_, i) =>
+        entry({ timeMs: 1000 + i, finishedAt: 1000 + i, contributors: [contributor(`Player ${i}`)] })
+      )
+    ]);
+
+    await lb.getBoards();
+    const stored = await storedEntries("beginner");
+
+    expect(await storedValue("lb:beginner")).toBeUndefined();
+    expect(await storedValue("migratedV2")).toBe(true);
+    expect(stored).toHaveLength(50);
+    expect(stored.filter((item) => item.contributors.some((itemContributor) => itemContributor.name === "Ada"))).toHaveLength(6);
+    expect(stored.map((item) => item.timeMs)).toEqual([400, 500, 501, 502, 503, 504, 505, ...Array.from({ length: 43 }, (_, i) => 1000 + i)]);
+  });
+
+  it("runs the legacy migration only once", async () => {
+    const lb = leaderboard();
+    await putStoredValue("lb:beginner", [entry({ timeMs: 900, finishedAt: 1, contributors: [contributor("Ada")] })]);
+
+    await lb.getBoards();
+    await putStoredValue("lb:beginner", [entry({ timeMs: 800, finishedAt: 2, contributors: [contributor("Bob")] })]);
+    await lb.getBoards();
+
+    expect((await storedEntries("beginner")).map((item) => item.timeMs)).toEqual([900]);
+    expect(await storedValue("lb:beginner")).toHaveLength(1);
+  });
+
+  it("recordWin persists the full migrated list instead of stranding legacy entries", async () => {
+    const lb = leaderboard();
+    await putStoredValue("lb:beginner", [entry({ timeMs: 700, finishedAt: 1, contributors: [contributor("Legacy")] })]);
+    await putStoredValue("lb:beginner:standard", [entry({ timeMs: 800, finishedAt: 2, contributors: [contributor("Modern")] })]);
+
+    await lb.recordWin(entry({ timeMs: 600, finishedAt: 3, contributors: [contributor("New")] }));
+
+    expect((await storedEntries("beginner")).map((item) => item.timeMs)).toEqual([600, 700, 800]);
+    expect(await storedValue("lb:beginner")).toBeUndefined();
+  });
+
   it("keeps exactly the 50 fastest entries when inserting 60", async () => {
     const lb = leaderboard();
     for (let i = 0; i < 60; i += 1) {
@@ -251,5 +310,12 @@ describe("Leaderboard", () => {
       expert: { standard: [], noguess: [] },
       zhenghua: { standard: [], noguess: [] }
     });
+  });
+
+  it("keeps GET /leaderboard-debug disabled unless the temporary flag is enabled", async () => {
+    const response = await SELF.fetch("https://mines.test/leaderboard-debug");
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
   });
 });
