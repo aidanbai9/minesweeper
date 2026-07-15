@@ -19,7 +19,7 @@ function makeEmitter() {
   };
 }
 
-function snapshotFromState(state, you) {
+function snapshotFromState(state, you, gameConfig) {
   const revealed = [];
   if (state.board) {
     for (let idx = 0; idx < state.revealed.length; idx += 1) {
@@ -111,7 +111,7 @@ export function createLocalTransport(config) {
 
   return {
     connect() {
-      queueMicrotask(() => emitter.emit("snapshot", snapshotFromState(state, you)));
+      queueMicrotask(() => emitter.emit("snapshot", snapshotFromState(state, you, gameConfig)));
     },
     send(action) {
       if (action.type === "CURSOR") {
@@ -134,7 +134,7 @@ export function createLocalTransport(config) {
     on: emitter.on,
     reset() {
       state = createGame(gameConfig);
-      emitter.emit("snapshot", snapshotFromState(state, you));
+      emitter.emit("snapshot", snapshotFromState(state, you, gameConfig));
     },
     reconfig(config) {
       gameConfig = {
@@ -145,7 +145,7 @@ export function createLocalTransport(config) {
       };
       state = createGame(gameConfig);
       updateHash(gameConfig);
-      emitter.emit("snapshot", snapshotFromState(state, you));
+      emitter.emit("snapshot", snapshotFromState(state, you, gameConfig));
     },
     rename(name) {
       you.name = name;

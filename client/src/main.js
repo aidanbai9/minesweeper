@@ -3,7 +3,7 @@ import { createLocalTransport } from "./local.js";
 import { createNetTransport } from "./net.js";
 import { setupInput } from "./input.js";
 import { mountGame, stateFromSnapshot } from "./render.js";
-import { HTTP_BASE } from "./config.js";
+import { HTTP_BASE, NO_GUESS_ENABLED } from "./config.js";
 
 const root = document.querySelector("#app");
 const STORAGE_KEY = "minesweeper:last-config";
@@ -53,9 +53,9 @@ function configFromParams(params, includeSeed = false) {
     w: params.get("w"),
     h: params.get("h"),
     mineCount: params.get("m"),
-    noGuess: params.get("ng") === "1" || params.get("noguess") === "1",
-    noGuessVerified: params.get("ngv") === "1",
-    noGuessSafeIdx: Number.parseInt(params.get("ngi") || "-1", 10)
+    noGuess: NO_GUESS_ENABLED && (params.get("ng") === "1" || params.get("noguess") === "1"),
+    noGuessVerified: NO_GUESS_ENABLED && params.get("ngv") === "1",
+    noGuessSafeIdx: NO_GUESS_ENABLED ? Number.parseInt(params.get("ngi") || "-1", 10) : -1
   };
   if (includeSeed) {
     base.seed = params.get("s") || params.get("seed") || randomSeed();
@@ -71,7 +71,7 @@ function configFromParams(params, includeSeed = false) {
 function storedConfig() {
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null") || PRESETS.beginner;
-    return { ...normalizeConfig(raw), noGuess: raw.noGuess === true };
+    return { ...normalizeConfig(raw), noGuess: NO_GUESS_ENABLED && raw.noGuess === true };
   } catch {
     return { ...normalizeConfig(PRESETS.beginner), noGuess: false };
   }
@@ -80,7 +80,12 @@ function storedConfig() {
 function saveConfig(config) {
   localStorage.setItem(
     STORAGE_KEY,
-    JSON.stringify({ w: config.w, h: config.h, mineCount: config.mineCount, noGuess: config.noGuess === true })
+    JSON.stringify({
+      w: config.w,
+      h: config.h,
+      mineCount: config.mineCount,
+      noGuess: NO_GUESS_ENABLED && config.noGuess === true
+    })
   );
 }
 
@@ -268,10 +273,16 @@ function renderMenu() {
           <label>Height <input name="h" type="number" min="5" max="60" value="${last.h}"></label>
           <label>Mines <input name="m" type="number" min="1" value="${last.mineCount}"></label>
         </div>
-        <label class="menu-checkbox">
-          <input name="noGuess" type="checkbox"${last.noGuess ? " checked" : ""}>
-          <span>No-guessing mode</span>
-        </label>
+        ${
+          NO_GUESS_ENABLED
+            ? `
+              <label class="menu-checkbox">
+                <input name="noGuess" type="checkbox"${last.noGuess ? " checked" : ""}>
+                <span>No-guessing mode</span>
+              </label>
+            `
+            : ""
+        }
         <div class="action-row">
           <button data-action="solo">Play solo (ranked)</button>
           <button data-action="offline">Play offline (UNRANKED)</button>
@@ -288,7 +299,10 @@ function renderMenu() {
   const noGuess = panel.querySelector('[name="noGuess"]');
 
   function currentConfig() {
-    return { ...normalizeConfig({ w: w.value, h: h.value, mineCount: m.value, seed: randomSeed() }), noGuess: noGuess.checked };
+    return {
+      ...normalizeConfig({ w: w.value, h: h.value, mineCount: m.value, seed: randomSeed() }),
+      noGuess: NO_GUESS_ENABLED && noGuess?.checked === true
+    };
   }
 
   panel.addEventListener("click", async (event) => {
@@ -298,7 +312,7 @@ function renderMenu() {
       w.value = config.w;
       h.value = config.h;
       m.value = config.mineCount;
-      saveConfig({ ...config, noGuess: noGuess.checked });
+      saveConfig({ ...config, noGuess: NO_GUESS_ENABLED && noGuess?.checked === true });
       return;
     }
 

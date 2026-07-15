@@ -1,6 +1,6 @@
 import { createChrome } from "./chrome.js";
 import { createPresence } from "./presence.js";
-import { CHAT_ENABLED } from "./config.js";
+import { CHAT_ENABLED, NO_GUESS_ENABLED } from "./config.js";
 import { AUTO_FLAG, PRESETS } from "../engine/index.js";
 
 const STATUS = { PENDING: 0, PLAYING: 1, WON: 2, LOST: 3 };
@@ -14,10 +14,10 @@ const PRESET_OPTIONS = [
   ["custom", "Custom"]
 ];
 const LEADERBOARD_PRESETS = PRESET_OPTIONS.filter(([key]) => key !== "custom");
-const LEADERBOARD_MODES = [
+const LEADERBOARD_MODES = NO_GUESS_ENABLED ? [
   ["standard", "Standard"],
   ["noguess", "No-guess"]
-];
+] : [["standard", "Standard"]];
 
 function checked(value, expected) {
   return value === expected ? " checked" : "";
@@ -172,10 +172,16 @@ function settingsHtml(state, prefs, options = {}) {
             <label>Mines <input data-config-input name="settings-m" type="number" min="1" step="1" value="${state.mineCount}"></label>
           </div>
           <p class="mine-range" data-role="mine-range"></p>
-          <label class="game-mode-toggle">
-            <input name="settings-no-guess" type="checkbox"${state.noGuess ? " checked" : ""}>
-            <span>No-guessing mode</span>
-          </label>
+          ${
+            NO_GUESS_ENABLED
+              ? `
+                <label class="game-mode-toggle">
+                  <input name="settings-no-guess" type="checkbox"${state.noGuess ? " checked" : ""}>
+                  <span>No-guessing mode</span>
+                </label>
+              `
+              : ""
+          }
           <div class="confirm-row" data-role="confirm-reconfig" hidden>
             <span>This starts a new game for everyone in the room. Continue?</span>
             <button type="button" data-confirm-reconfig>Continue</button>
@@ -497,7 +503,7 @@ export function mountGame(root, initialState, handlers) {
   const renameStatus = settingsBackdrop.querySelector("[data-rename-status]");
   let pendingConfig = null;
   let activeLeaderboardPreset = presetForConfig(state) === "custom" ? "expert" : presetForConfig(state);
-  let activeLeaderboardMode = state.noGuess === true ? "noguess" : "standard";
+  let activeLeaderboardMode = NO_GUESS_ENABLED && state.noGuess === true ? "noguess" : "standard";
   let leaderboardBoards = null;
 
   function setRadio(name, value) {
@@ -537,7 +543,7 @@ export function mountGame(root, initialState, handlers) {
     mineRange.textContent = dimensionsValid ? `Valid mines: 1-${maxMines}` : "Width and height must be 5-60";
     minesInput.max = dimensionsValid ? String(maxMines) : "";
     applyButton.disabled = !valid;
-    return valid ? { w, h, mineCount, noGuess: noGuessInput?.checked === true } : null;
+    return valid ? { w, h, mineCount, noGuess: NO_GUESS_ENABLED && noGuessInput?.checked === true } : null;
   }
 
   function syncSettingsForm() {
@@ -698,7 +704,7 @@ export function mountGame(root, initialState, handlers) {
 
   async function openLeaderboard() {
     activeLeaderboardPreset = presetForConfig(state) === "custom" ? activeLeaderboardPreset : presetForConfig(state);
-    activeLeaderboardMode = state.noGuess === true ? "noguess" : activeLeaderboardMode;
+    activeLeaderboardMode = NO_GUESS_ENABLED && state.noGuess === true ? "noguess" : activeLeaderboardMode;
     leaderboardBackdrop.hidden = false;
     leaderboardClose.focus();
     renderLeaderboardTabs();
