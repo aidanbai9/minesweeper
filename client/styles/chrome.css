@@ -282,47 +282,47 @@ textarea {
   height: var(--led-digit-h);
 }
 
-.led-digit[data-glyph="0"] {
+.led-digit[data-digit="0"] {
   --led-digit-glyph: var(--led-digit-0);
 }
 
-.led-digit[data-glyph="1"] {
+.led-digit[data-digit="1"] {
   --led-digit-glyph: var(--led-digit-1);
 }
 
-.led-digit[data-glyph="2"] {
+.led-digit[data-digit="2"] {
   --led-digit-glyph: var(--led-digit-2);
 }
 
-.led-digit[data-glyph="3"] {
+.led-digit[data-digit="3"] {
   --led-digit-glyph: var(--led-digit-3);
 }
 
-.led-digit[data-glyph="4"] {
+.led-digit[data-digit="4"] {
   --led-digit-glyph: var(--led-digit-4);
 }
 
-.led-digit[data-glyph="5"] {
+.led-digit[data-digit="5"] {
   --led-digit-glyph: var(--led-digit-5);
 }
 
-.led-digit[data-glyph="6"] {
+.led-digit[data-digit="6"] {
   --led-digit-glyph: var(--led-digit-6);
 }
 
-.led-digit[data-glyph="7"] {
+.led-digit[data-digit="7"] {
   --led-digit-glyph: var(--led-digit-7);
 }
 
-.led-digit[data-glyph="8"] {
+.led-digit[data-digit="8"] {
   --led-digit-glyph: var(--led-digit-8);
 }
 
-.led-digit[data-glyph="9"] {
+.led-digit[data-digit="9"] {
   --led-digit-glyph: var(--led-digit-9);
 }
 
-.led-digit[data-glyph="neg"] {
+.led-digit[data-digit="neg"] {
   --led-digit-glyph: var(--led-digit-neg);
 }
 
@@ -342,6 +342,59 @@ textarea {
 }
 
 .seg.on {
+  background: var(--led-on);
+}
+
+.led-digit[data-digit="0"] .seg-a,
+.led-digit[data-digit="0"] .seg-b,
+.led-digit[data-digit="0"] .seg-c,
+.led-digit[data-digit="0"] .seg-d,
+.led-digit[data-digit="0"] .seg-e,
+.led-digit[data-digit="0"] .seg-f,
+.led-digit[data-digit="1"] .seg-b,
+.led-digit[data-digit="1"] .seg-c,
+.led-digit[data-digit="2"] .seg-a,
+.led-digit[data-digit="2"] .seg-b,
+.led-digit[data-digit="2"] .seg-d,
+.led-digit[data-digit="2"] .seg-e,
+.led-digit[data-digit="2"] .seg-g,
+.led-digit[data-digit="3"] .seg-a,
+.led-digit[data-digit="3"] .seg-b,
+.led-digit[data-digit="3"] .seg-c,
+.led-digit[data-digit="3"] .seg-d,
+.led-digit[data-digit="3"] .seg-g,
+.led-digit[data-digit="4"] .seg-b,
+.led-digit[data-digit="4"] .seg-c,
+.led-digit[data-digit="4"] .seg-f,
+.led-digit[data-digit="4"] .seg-g,
+.led-digit[data-digit="5"] .seg-a,
+.led-digit[data-digit="5"] .seg-c,
+.led-digit[data-digit="5"] .seg-d,
+.led-digit[data-digit="5"] .seg-f,
+.led-digit[data-digit="5"] .seg-g,
+.led-digit[data-digit="6"] .seg-a,
+.led-digit[data-digit="6"] .seg-c,
+.led-digit[data-digit="6"] .seg-d,
+.led-digit[data-digit="6"] .seg-e,
+.led-digit[data-digit="6"] .seg-f,
+.led-digit[data-digit="6"] .seg-g,
+.led-digit[data-digit="7"] .seg-a,
+.led-digit[data-digit="7"] .seg-b,
+.led-digit[data-digit="7"] .seg-c,
+.led-digit[data-digit="8"] .seg-a,
+.led-digit[data-digit="8"] .seg-b,
+.led-digit[data-digit="8"] .seg-c,
+.led-digit[data-digit="8"] .seg-d,
+.led-digit[data-digit="8"] .seg-e,
+.led-digit[data-digit="8"] .seg-f,
+.led-digit[data-digit="8"] .seg-g,
+.led-digit[data-digit="9"] .seg-a,
+.led-digit[data-digit="9"] .seg-b,
+.led-digit[data-digit="9"] .seg-c,
+.led-digit[data-digit="9"] .seg-d,
+.led-digit[data-digit="9"] .seg-f,
+.led-digit[data-digit="9"] .seg-g,
+.led-digit[data-digit="neg"] .seg-g {
   background: var(--led-on);
 }
 

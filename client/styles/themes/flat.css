@@ -71,7 +71,15 @@
 }
 
 [data-theme="flat"] .led-digit {
+  background-image: var(--led-digit-glyph, none);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
   image-rendering: pixelated;
+}
+
+[data-theme="flat"] .led-digit::before {
+  display: none;
 }
 
 [data-theme="flat"] .led-digit .seg {
