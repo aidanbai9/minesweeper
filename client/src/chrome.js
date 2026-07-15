@@ -22,7 +22,8 @@ function formatCounter(value) {
 
 function digitHtml(char) {
   const on = new Set(DIGIT_SEGMENTS[char] || []);
-  return `<div class="led-digit" aria-hidden="true">${["a", "b", "c", "d", "e", "f", "g"]
+  const glyph = char === "-" ? "neg" : char;
+  return `<div class="led-digit" data-glyph="${glyph}" aria-hidden="true">${["a", "b", "c", "d", "e", "f", "g"]
     .map((seg) => `<span class="seg seg-${seg} ${on.has(seg) ? "on" : ""}"></span>`)
     .join("")}</div>`;
 }

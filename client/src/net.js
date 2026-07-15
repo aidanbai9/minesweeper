@@ -24,6 +24,9 @@ function buildRoomUrl(code, config, includeConfig) {
     url.searchParams.set("w", config.w);
     url.searchParams.set("h", config.h);
     url.searchParams.set("m", config.mineCount);
+    if (config.noGuess === true) {
+      url.searchParams.set("ng", "1");
+    }
   }
   return url.toString();
 }
@@ -85,6 +88,14 @@ export function createNetTransport({ code, config, name = "Player", token = "" }
         emitter.emit("peer_leave", message.playerId);
       } else if (message.t === "CURSOR") {
         emitter.emit("cursor", { playerId: message.playerId, idx: message.idx });
+      } else if (message.t === "CHAT") {
+        emitter.emit("chat", {
+          playerId: message.playerId,
+          name: message.name,
+          color: message.color,
+          text: message.text,
+          ts: message.ts
+        });
       } else if (message.t === "NOTICE") {
         emitter.emit("notice", message.text);
       } else if (message.t === "WIN_RECORDED") {
@@ -125,6 +136,9 @@ export function createNetTransport({ code, config, name = "Player", token = "" }
       if (action.assist) {
         payload.assist = action.assist;
       }
+      if (action.noGuessSeed) {
+        payload.noGuessSeed = action.noGuessSeed;
+      }
       const message = { t: "ACTION", seq: action.seq, action: payload };
       outbox.push(message);
       if (outbox.length > 100) {
@@ -144,6 +158,9 @@ export function createNetTransport({ code, config, name = "Player", token = "" }
     rename(name) {
       displayName = name;
       pendingRename = !sendRaw({ t: "RENAME", name });
+    },
+    sendChat(text) {
+      sendRaw({ t: "CHAT", text });
     },
     close() {
       closed = true;

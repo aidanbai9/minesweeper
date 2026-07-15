@@ -2,7 +2,7 @@ import { assertConfig, normalizeConfig } from "../../engine/src/index.js";
 
 export const VERSION = 1;
 export const ACTION_TYPES = new Set(["REVEAL", "FLAG", "CHORD"]);
-export const CLIENT_TYPES = new Set(["HELLO", "ACTION", "CURSOR", "RESET", "RECONFIG", "RENAME"]);
+export const CLIENT_TYPES = new Set(["HELLO", "ACTION", "CURSOR", "RESET", "RECONFIG", "RENAME", "CHAT"]);
 export const SERVER_TYPES = new Set([
   "SNAPSHOT",
   "EVENTS",
@@ -10,6 +10,7 @@ export const SERVER_TYPES = new Set([
   "PEER_RENAME",
   "PEER_LEAVE",
   "CURSOR",
+  "CHAT",
   "NOTICE",
   "WIN_RECORDED",
   "WIN_INELIGIBLE",
@@ -97,6 +98,13 @@ export function validateInbound(value, totalCells) {
     return { ok: true, value: { v: VERSION, t: "RENAME", name } };
   }
 
+  if (value.t === "CHAT") {
+    if (typeof value.text !== "string") {
+      return { ok: false, code: "bad_chat", message: "Chat text must be a string" };
+    }
+    return { ok: true, value: { v: VERSION, t: "CHAT", text: value.text } };
+  }
+
   if (value.t === "RESET") {
     return { ok: true, value: { v: VERSION, t: "RESET" } };
   }
@@ -158,6 +166,12 @@ export function validateInbound(value, totalCells) {
   const normalized = { type: action.type, idx: action.idx };
   if (assist.value !== undefined) {
     normalized.assist = assist.value;
+  }
+  if (action.noGuessSeed !== undefined) {
+    if (typeof action.noGuessSeed !== "string" || action.noGuessSeed.length < 1 || action.noGuessSeed.length > 256) {
+      return { ok: false, code: "bad_action", message: "No-guess seed must be a short string" };
+    }
+    normalized.noGuessSeed = cleanToken(action.noGuessSeed).slice(0, 256);
   }
   const message = { v: VERSION, t: "ACTION", action: normalized };
   if (seq.value !== undefined) {

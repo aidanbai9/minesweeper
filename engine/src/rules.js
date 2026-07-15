@@ -308,6 +308,7 @@ export function createGame(config) {
 
   return {
     ...normalized,
+    noGuess: config?.noGuess === true,
     status: Status.PENDING,
     board: null,
     revealed: new Uint8Array(total),
@@ -340,7 +341,7 @@ function applyFlagAction(state, idx, playerId) {
   return { state: next, events: [{ t: "FLAG", idx, playerId, on: true }], touched: [idx] };
 }
 
-function applyRevealAction(state, idx, playerId, now) {
+function applyRevealAction(state, idx, playerId, now, noGuessSeed = "") {
   const total = state.w * state.h;
   if (!Number.isInteger(idx) || idx < 0 || idx >= total || state.flags[idx]) {
     return { state, events: [], touched: [] };
@@ -351,6 +352,7 @@ function applyRevealAction(state, idx, playerId, now) {
   const touched = [];
 
   if (next.status === Status.PENDING) {
+    next.seed = typeof noGuessSeed === "string" && noGuessSeed ? noGuessSeed : next.seed;
     next.board = generateBoard(next.seed, next.w, next.h, next.mineCount, idx);
     next.status = Status.PLAYING;
     next.startedAt = now;
@@ -427,7 +429,7 @@ export function applyAction(state, action) {
   if (action?.type === "FLAG") {
     result = applyFlagAction(inputState, idx, playerId);
   } else if (action?.type === "REVEAL") {
-    result = applyRevealAction(inputState, idx, playerId, now);
+    result = applyRevealAction(inputState, idx, playerId, now, action.noGuessSeed);
   } else if (action?.type === "CHORD") {
     result = applyChordAction(inputState, idx, now);
   } else {

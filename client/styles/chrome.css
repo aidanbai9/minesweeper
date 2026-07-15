@@ -22,6 +22,7 @@
   --board-max-h-gap: calc(130px * var(--scale));
   --menu-panel-width: calc(360px * var(--scale));
   --settings-width: calc(420px * var(--scale));
+  --chat-width: calc(260px * var(--scale));
   --dialog-margin: calc(24px * var(--scale));
   --led-gap: calc(2px * var(--scale));
   --led-height: calc(32px * var(--scale));
@@ -84,11 +85,13 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
-input {
+input,
+textarea {
   background: var(--input-bg);
   color: var(--input-fg);
 }
@@ -102,7 +105,8 @@ input {
 }
 
 .mines-panel,
-.menu-panel {
+.menu-panel,
+.chat-panel {
   background: var(--panel-bg);
   border-top: var(--panel-bevel-width) solid var(--panel-bevel-light);
   border-left: var(--panel-bevel-width) solid var(--panel-bevel-light);
@@ -133,6 +137,7 @@ input {
 .face,
 .leaderboard-button,
 .settings-button,
+.chat-toggle,
 .settings-close,
 .result-close,
 .leaderboard-close,
@@ -142,7 +147,8 @@ input {
 .apply-button,
 .confirm-row button,
 .name-form button,
-.rename-form button {
+.rename-form button,
+.chat-form button {
   background: var(--button-bg);
   border-top: var(--button-bevel-width) solid var(--button-bevel-light);
   border-left: var(--button-bevel-width) solid var(--button-bevel-light);
@@ -156,7 +162,8 @@ input {
 .confirm-row button,
 .leaderboard-tabs button,
 .name-form button,
-.rename-form button {
+.rename-form button,
+.chat-form button {
   min-height: var(--button-min-h);
   padding: var(--button-pad-y) var(--button-pad-x);
 }
@@ -166,6 +173,7 @@ input {
 .face:active,
 .leaderboard-button:active,
 .settings-button:active,
+.chat-toggle:active,
 .settings-close:active,
 .result-close:active,
 .leaderboard-close:active,
@@ -173,6 +181,7 @@ input {
 .confirm-row button:active,
 .name-form button:active,
 .rename-form button:active,
+.chat-form button:active,
 .leaderboard-tabs button.active,
 .segmented input:checked + span,
 .settings-preset-row input:checked + span {
@@ -213,6 +222,14 @@ input {
   border-left: var(--panel-bevel-width) solid var(--panel-inset-dark);
   border-right: var(--panel-bevel-width) solid var(--panel-inset-light);
   border-bottom: var(--panel-bevel-width) solid var(--panel-inset-light);
+}
+
+.game-layout {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: var(--gap);
+  max-width: 100%;
 }
 
 .face {
@@ -263,6 +280,60 @@ input {
   position: relative;
   width: var(--led-digit-w);
   height: var(--led-digit-h);
+}
+
+.led-digit[data-glyph="0"] {
+  --led-digit-glyph: var(--led-digit-0);
+}
+
+.led-digit[data-glyph="1"] {
+  --led-digit-glyph: var(--led-digit-1);
+}
+
+.led-digit[data-glyph="2"] {
+  --led-digit-glyph: var(--led-digit-2);
+}
+
+.led-digit[data-glyph="3"] {
+  --led-digit-glyph: var(--led-digit-3);
+}
+
+.led-digit[data-glyph="4"] {
+  --led-digit-glyph: var(--led-digit-4);
+}
+
+.led-digit[data-glyph="5"] {
+  --led-digit-glyph: var(--led-digit-5);
+}
+
+.led-digit[data-glyph="6"] {
+  --led-digit-glyph: var(--led-digit-6);
+}
+
+.led-digit[data-glyph="7"] {
+  --led-digit-glyph: var(--led-digit-7);
+}
+
+.led-digit[data-glyph="8"] {
+  --led-digit-glyph: var(--led-digit-8);
+}
+
+.led-digit[data-glyph="9"] {
+  --led-digit-glyph: var(--led-digit-9);
+}
+
+.led-digit[data-glyph="neg"] {
+  --led-digit-glyph: var(--led-digit-neg);
+}
+
+.led-digit::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: var(--led-digit-glyph, none);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
 }
 
 .seg {
@@ -363,6 +434,114 @@ input {
   width: var(--peer-dot);
   height: var(--peer-dot);
   border: var(--chrome-thin-bevel) solid var(--text-fg);
+}
+
+.chat-panel {
+  display: grid;
+  gap: var(--gap);
+  width: min(var(--chat-width), calc(100vw - var(--board-max-w-gap)));
+  padding: var(--panel-pad);
+}
+
+.chat-toggle {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: var(--button-min-h);
+  padding: var(--button-pad-y) var(--button-pad-x);
+  font-weight: 700;
+}
+
+.chat-body {
+  display: grid;
+  grid-template-rows: minmax(calc(150px * var(--scale)), calc(260px * var(--scale))) auto auto;
+  gap: var(--gap);
+}
+
+.chat-body[hidden] {
+  display: none;
+}
+
+.chat-messages {
+  overflow: auto;
+  padding: var(--small-gap);
+  background: var(--input-bg);
+  border-top: var(--button-bevel-width) solid var(--panel-inset-dark);
+  border-left: var(--button-bevel-width) solid var(--panel-inset-dark);
+  border-right: var(--button-bevel-width) solid var(--panel-inset-light);
+  border-bottom: var(--button-bevel-width) solid var(--panel-inset-light);
+}
+
+.chat-message {
+  display: grid;
+  gap: var(--tiny-gap);
+  padding: var(--small-gap);
+}
+
+.chat-message + .chat-message {
+  border-top: var(--chrome-thin-bevel) solid var(--leaderboard-border);
+}
+
+.chat-message.you {
+  background: var(--notice-bg);
+}
+
+.chat-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--small-gap);
+}
+
+.chat-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+
+.chat-time {
+  flex: 0 0 auto;
+  color: var(--muted-fg);
+  font-size: calc(10px * var(--scale));
+}
+
+.chat-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--small-gap);
+}
+
+.chat-form textarea {
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+  border: var(--button-bevel-width) inset var(--button-bg);
+  padding: var(--led-pad-y) var(--tiny-gap);
+}
+
+.chat-unread {
+  min-width: calc(16px * var(--scale));
+  padding: 0 var(--tiny-gap);
+  background: var(--led-on);
+  color: #ffffff;
+  text-align: center;
+  font-size: calc(10px * var(--scale));
+  line-height: calc(16px * var(--scale));
+}
+
+.chat-unread[hidden] {
+  display: none;
+}
+
+.chat-notice {
+  margin: 0;
+  color: var(--muted-fg);
 }
 
 .reconnect-banner,
@@ -660,5 +839,14 @@ input {
   .confirm-row {
     grid-template-columns: 1fr;
     display: grid;
+  }
+
+  .game-layout {
+    display: grid;
+    justify-items: center;
+  }
+
+  .chat-panel {
+    width: min(100%, calc(100vw - calc(2 * var(--mobile-pad))));
   }
 }

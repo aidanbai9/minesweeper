@@ -1,5 +1,6 @@
 import { createChrome } from "./chrome.js";
 import { createPresence } from "./presence.js";
+import { CHAT_ENABLED } from "./config.js";
 import { AUTO_FLAG, PRESETS } from "../engine/index.js";
 
 const STATUS = { PENDING: 0, PLAYING: 1, WON: 2, LOST: 3 };
@@ -13,6 +14,10 @@ const PRESET_OPTIONS = [
   ["custom", "Custom"]
 ];
 const LEADERBOARD_PRESETS = PRESET_OPTIONS.filter(([key]) => key !== "custom");
+const LEADERBOARD_MODES = [
+  ["standard", "Standard"],
+  ["noguess", "No-guess"]
+];
 
 function checked(value, expected) {
   return value === expected ? " checked" : "";
@@ -47,6 +52,14 @@ function formatRank(rank) {
   const teen = n % 100 >= 11 && n % 100 <= 13;
   const suffix = teen ? "th" : { 1: "st", 2: "nd", 3: "rd" }[n % 10] || "th";
   return `${n}${suffix}`;
+}
+
+function formatChatTime(ts) {
+  const date = new Date(ts);
+  if (!Number.isFinite(date.getTime())) {
+    return "";
+  }
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 function cleanName(name) {
@@ -159,6 +172,10 @@ function settingsHtml(state, prefs, options = {}) {
             <label>Mines <input data-config-input name="settings-m" type="number" min="1" step="1" value="${state.mineCount}"></label>
           </div>
           <p class="mine-range" data-role="mine-range"></p>
+          <label class="game-mode-toggle">
+            <input name="settings-no-guess" type="checkbox"${state.noGuess ? " checked" : ""}>
+            <span>No-guessing mode</span>
+          </label>
           <div class="confirm-row" data-role="confirm-reconfig" hidden>
             <span>This starts a new game for everyone in the room. Continue?</span>
             <button type="button" data-confirm-reconfig>Continue</button>
@@ -195,6 +212,7 @@ function leaderboardHtml() {
           <button class="leaderboard-close" type="button" data-leaderboard-close aria-label="close">&times;</button>
         </div>
         <div class="leaderboard-tabs" data-leaderboard-tabs></div>
+        <div class="leaderboard-tabs" data-leaderboard-mode-tabs></div>
         <div class="leaderboard-body" data-leaderboard-body></div>
       </section>
     </div>
@@ -282,9 +300,13 @@ export function stateFromSnapshot(snapshot) {
   }
 
   return {
+    seed: snapshot.config.seed || "",
     w,
     h,
     mineCount,
+    noGuess: snapshot.noGuess === true,
+    noGuessVerified: snapshot.config.noGuessVerified === true,
+    noGuessSafeIdx: Number.isInteger(snapshot.config.noGuessSafeIdx) ? snapshot.config.noGuessSafeIdx : -1,
     status: snapshot.status,
     counts,
     revealed,
@@ -305,7 +327,12 @@ export function stateFromSnapshot(snapshot) {
 export function mountGame(root, initialState, handlers) {
   let state = initialState;
   let prefs = { cellSize: "100", theme: "classic", autoChord: false, autoFlag: false, ...(handlers.prefs || {}) };
+  const chatEnabled = CHAT_ENABLED && handlers.online === true;
+  let generating = false;
   let held = false;
+  let chatCollapsed =
+    chatEnabled && typeof matchMedia === "function" && matchMedia("(max-width: 35rem)").matches;
+  let unreadChat = 0;
   let timer = 0;
   let renderFrame = 0;
   let renderChrome = false;
@@ -318,15 +345,41 @@ export function mountGame(root, initialState, handlers) {
     <div class="reconnect-banner" hidden>reconnecting...</div>
     <div class="toast-stack" aria-live="polite" aria-atomic="true"></div>
     <main class="shell">
-      <section class="mines-panel">
-        <div class="top chrome"></div>
-        <div class="board-frame">
-          <div class="board" role="grid"></div>
-        </div>
-        <div class="peer-strip"></div>
-      </section>
+      <div class="game-layout">
+        <section class="mines-panel">
+          <div class="top chrome"></div>
+          <div class="board-frame">
+            <div class="board" role="grid"></div>
+          </div>
+          <div class="peer-strip"></div>
+        </section>
+        ${
+          chatEnabled
+            ? `
+              <section class="chat-panel" data-chat-panel>
+                <button class="chat-toggle" type="button" data-chat-toggle aria-expanded="true">
+                  <span data-chat-label>Chat</span>
+                  <span class="chat-unread" data-chat-unread hidden></span>
+                </button>
+                <div class="chat-body" data-chat-body>
+                  <div class="chat-messages" data-chat-messages aria-live="polite"></div>
+                  <form class="chat-form" data-chat-form>
+                    <textarea name="chat" rows="2" maxlength="500"></textarea>
+                    <button type="submit">Send</button>
+                  </form>
+                  <p class="chat-notice" data-chat-notice hidden></p>
+                </div>
+              </section>
+            `
+            : ""
+        }
+      </div>
     </main>
-    ${settingsHtml(state, prefs, { canRename: typeof handlers.onRename === "function", themes: handlers.themes })}
+    ${settingsHtml(state, prefs, {
+      canRename: typeof handlers.onRename === "function",
+      themes: handlers.themes,
+      online: handlers.online === true
+    })}
     ${resultHtml()}
     ${leaderboardHtml()}
   `;
@@ -343,6 +396,14 @@ export function mountGame(root, initialState, handlers) {
   });
   const board = root.querySelector(".board");
   const peerStrip = root.querySelector(".peer-strip");
+  const chatPanel = root.querySelector("[data-chat-panel]");
+  const chatToggle = root.querySelector("[data-chat-toggle]");
+  const chatBody = root.querySelector("[data-chat-body]");
+  const chatUnread = root.querySelector("[data-chat-unread]");
+  const chatMessages = root.querySelector("[data-chat-messages]");
+  const chatForm = root.querySelector("[data-chat-form]");
+  const chatInput = chatForm?.querySelector('textarea[name="chat"]');
+  const chatNotice = root.querySelector("[data-chat-notice]");
   board.style.gridTemplateColumns = `repeat(${state.w}, var(--cell))`;
   board.style.gridTemplateRows = `repeat(${state.h}, var(--cell))`;
 
@@ -360,6 +421,60 @@ export function mountGame(root, initialState, handlers) {
   const presence = createPresence(cells, peerStrip);
   presence.setPeers([...state.peers.values()].filter((peer) => peer.playerId !== state.you?.playerId), state.you);
 
+  function syncChatCollapsed() {
+    if (!chatPanel) {
+      return;
+    }
+    chatPanel.classList.toggle("collapsed", chatCollapsed);
+    chatToggle?.setAttribute("aria-expanded", String(!chatCollapsed));
+    if (chatBody) {
+      chatBody.hidden = chatCollapsed;
+    }
+    if (!chatCollapsed) {
+      unreadChat = 0;
+    }
+    if (chatUnread) {
+      chatUnread.hidden = unreadChat === 0;
+      chatUnread.textContent = unreadChat > 9 ? "9+" : String(unreadChat);
+    }
+  }
+
+  function appendChatMessage(message) {
+    if (!chatMessages) {
+      return;
+    }
+    const row = document.createElement("div");
+    row.className = `chat-message${message.playerId === state.you?.playerId ? " you" : ""}`;
+
+    const meta = document.createElement("div");
+    meta.className = "chat-meta";
+
+    const name = document.createElement("span");
+    name.className = "chat-name";
+    name.style.color = state.peers.get(message.playerId)?.color || message.color || "black";
+    name.textContent = typeof message.name === "string" && message.name ? message.name : `Player ${message.playerId + 1}`;
+
+    const time = document.createElement("time");
+    time.className = "chat-time";
+    time.dateTime = Number.isFinite(message.ts) ? new Date(message.ts).toISOString() : "";
+    time.textContent = formatChatTime(message.ts);
+
+    const text = document.createElement("div");
+    text.className = "chat-text";
+    text.textContent = typeof message.text === "string" ? message.text : "";
+
+    meta.append(name, time);
+    row.append(meta, text);
+    chatMessages.append(row);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    if (chatCollapsed) {
+      unreadChat += 1;
+      syncChatCollapsed();
+    }
+  }
+
+  syncChatCollapsed();
+
   const settingsClose = settingsBackdrop.querySelector("[data-settings-close]");
   const resultClose = resultBackdrop.querySelector("[data-result-close]");
   const resultTitle = resultBackdrop.querySelector("[data-result-title]");
@@ -367,6 +482,7 @@ export function mountGame(root, initialState, handlers) {
   const resultRank = resultBackdrop.querySelector("[data-result-rank]");
   const leaderboardClose = leaderboardBackdrop.querySelector("[data-leaderboard-close]");
   const leaderboardTabs = leaderboardBackdrop.querySelector("[data-leaderboard-tabs]");
+  const leaderboardModeTabs = leaderboardBackdrop.querySelector("[data-leaderboard-mode-tabs]");
   const leaderboardBody = leaderboardBackdrop.querySelector("[data-leaderboard-body]");
   const mineRange = settingsBackdrop.querySelector('[data-role="mine-range"]');
   const applyButton = settingsBackdrop.querySelector("[data-apply-reconfig]");
@@ -374,12 +490,14 @@ export function mountGame(root, initialState, handlers) {
   const widthInput = settingsBackdrop.querySelector('[name="settings-w"]');
   const heightInput = settingsBackdrop.querySelector('[name="settings-h"]');
   const minesInput = settingsBackdrop.querySelector('[name="settings-m"]');
+  const noGuessInput = settingsBackdrop.querySelector('[name="settings-no-guess"]');
   const renameForm = settingsBackdrop.querySelector("[data-rename-form]");
   const displayNameInput = settingsBackdrop.querySelector('[name="displayName"]');
   const renameError = settingsBackdrop.querySelector("[data-rename-error]");
   const renameStatus = settingsBackdrop.querySelector("[data-rename-status]");
   let pendingConfig = null;
   let activeLeaderboardPreset = presetForConfig(state) === "custom" ? "expert" : presetForConfig(state);
+  let activeLeaderboardMode = state.noGuess === true ? "noguess" : "standard";
   let leaderboardBoards = null;
 
   function setRadio(name, value) {
@@ -419,7 +537,7 @@ export function mountGame(root, initialState, handlers) {
     mineRange.textContent = dimensionsValid ? `Valid mines: 1-${maxMines}` : "Width and height must be 5-60";
     minesInput.max = dimensionsValid ? String(maxMines) : "";
     applyButton.disabled = !valid;
-    return valid ? { w, h, mineCount } : null;
+    return valid ? { w, h, mineCount, noGuess: noGuessInput?.checked === true } : null;
   }
 
   function syncSettingsForm() {
@@ -429,6 +547,9 @@ export function mountGame(root, initialState, handlers) {
     setCheckbox("autoFlag", prefs.autoFlag);
     setRadio("preset", presetForConfig(state));
     setGameInputs(state);
+    if (noGuessInput) {
+      noGuessInput.checked = state.noGuess === true;
+    }
     if (displayNameInput) {
       displayNameInput.value = state.you?.name || "";
     }
@@ -513,12 +634,22 @@ export function mountGame(root, initialState, handlers) {
       button.className = key === activeLeaderboardPreset ? "active" : "";
       leaderboardTabs.append(button);
     }
+    leaderboardModeTabs.replaceChildren();
+    for (const [key, label] of LEADERBOARD_MODES) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.mode = key;
+      button.textContent = label;
+      button.className = key === activeLeaderboardMode ? "active" : "";
+      leaderboardModeTabs.append(button);
+    }
   }
 
   function renderLeaderboardRows() {
     renderLeaderboardTabs();
     leaderboardBody.replaceChildren();
-    const entries = leaderboardBoards?.[activeLeaderboardPreset] || [];
+    const board = leaderboardBoards?.[activeLeaderboardPreset];
+    const entries = Array.isArray(board) ? board : board?.[activeLeaderboardMode] || [];
     if (entries.length === 0) {
       const empty = document.createElement("p");
       empty.className = "leaderboard-empty";
@@ -567,6 +698,7 @@ export function mountGame(root, initialState, handlers) {
 
   async function openLeaderboard() {
     activeLeaderboardPreset = presetForConfig(state) === "custom" ? activeLeaderboardPreset : presetForConfig(state);
+    activeLeaderboardMode = state.noGuess === true ? "noguess" : activeLeaderboardMode;
     leaderboardBackdrop.hidden = false;
     leaderboardClose.focus();
     renderLeaderboardTabs();
@@ -620,6 +752,9 @@ export function mountGame(root, initialState, handlers) {
       if (target.value !== "custom") {
         setGameInputs(PRESETS[target.value]);
       }
+      clearConfirm();
+      updateGameValidation();
+    } else if (target.name === "settings-no-guess") {
       clearConfirm();
       updateGameValidation();
     }
@@ -681,6 +816,39 @@ export function mountGame(root, initialState, handlers) {
     handlers.onRename?.(name);
   });
 
+  chatToggle?.addEventListener("click", () => {
+    chatCollapsed = !chatCollapsed;
+    syncChatCollapsed();
+    if (!chatCollapsed) {
+      chatInput?.focus();
+    }
+  });
+
+  chatForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const text = chatInput?.value || "";
+    if (!text.trim()) {
+      chatInput?.focus();
+      return;
+    }
+    handlers.onChatSend?.(text);
+    if (chatInput) {
+      chatInput.value = "";
+      chatInput.focus();
+    }
+    if (chatNotice) {
+      chatNotice.hidden = true;
+    }
+  });
+
+  chatInput?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.shiftKey) {
+      return;
+    }
+    event.preventDefault();
+    chatForm?.requestSubmit();
+  });
+
   resultBackdrop.addEventListener("click", (event) => {
     if (event.target === resultBackdrop || event.target.closest("[data-result-close]")) {
       closeResult();
@@ -695,6 +863,12 @@ export function mountGame(root, initialState, handlers) {
     const tab = event.target.closest("[data-preset]");
     if (tab) {
       activeLeaderboardPreset = tab.dataset.preset;
+      renderLeaderboardRows();
+      return;
+    }
+    const modeTab = event.target.closest("[data-mode]");
+    if (modeTab) {
+      activeLeaderboardMode = modeTab.dataset.mode;
       renderLeaderboardRows();
     }
   });
@@ -1000,6 +1174,10 @@ export function mountGame(root, initialState, handlers) {
       }
     },
     setPending,
+    setGenerating(value) {
+      generating = value === true;
+      chrome.update(state, generating || held);
+    },
     getAssist() {
       return { autoChord: prefs.autoChord === true, autoFlag: prefs.autoFlag === true };
     },
@@ -1060,6 +1238,20 @@ export function mountGame(root, initialState, handlers) {
       }
     },
     showNotice,
+    addChatMessage(message) {
+      if (!chatEnabled) {
+        return;
+      }
+      appendChatMessage(message);
+    },
+    showChatNotice(message) {
+      if (!chatNotice) {
+        showNotice(message);
+        return;
+      }
+      chatNotice.textContent = message;
+      chatNotice.hidden = false;
+    },
     setRenameError(message) {
       if (renameError) {
         renameError.textContent = message || "Unable to change username.";

@@ -10,3 +10,5 @@ npm-debug.log*
 .env
 client/engine/
 out.txt
+engine/proto/
+engine/bench-*.mjs

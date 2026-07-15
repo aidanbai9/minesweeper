@@ -4,9 +4,14 @@ import { cleanName, cleanToken } from "./protocol.js";
 
 const MAX_ENTRIES = 50;
 const PRESET_KEYS = Object.freeze(Object.keys(PRESETS));
+const MODES = Object.freeze(["standard", "noguess"]);
 
-function boardKey(preset) {
-  return `lb:${preset}`;
+function normalizeMode(mode) {
+  return mode === "noguess" ? "noguess" : "standard";
+}
+
+function boardKey(preset, mode = "standard") {
+  return `lb:${preset}:${normalizeMode(mode)}`;
 }
 
 function normalizeContributor(contributor) {
@@ -43,7 +48,7 @@ function normalizeEntry(entry) {
       ? entry.players.map(normalizeLegacyPlayer).filter(Boolean)
       : [];
 
-  return { timeMs, contributors, preset, finishedAt };
+  return { timeMs, contributors, preset, mode: normalizeMode(entry.mode), finishedAt };
 }
 
 function sortEntries(a, b) {
@@ -62,7 +67,7 @@ function publicEntry(entry) {
 export class Leaderboard extends DurableObject {
   async recordWin(entry) {
     const normalized = normalizeEntry(entry);
-    const key = boardKey(normalized.preset);
+    const key = boardKey(normalized.preset, normalized.mode);
     const entries = ((await this.ctx.storage.get(key)) || []).map(normalizeEntry);
     entries.push(normalized);
     entries.sort(sortEntries);
@@ -76,9 +81,14 @@ export class Leaderboard extends DurableObject {
   async getBoards() {
     const boards = {};
     for (const preset of PRESET_KEYS) {
-      const entries = ((await this.ctx.storage.get(boardKey(preset))) || []).map(normalizeEntry);
-      entries.sort(sortEntries);
-      boards[preset] = entries.slice(0, MAX_ENTRIES).map(publicEntry);
+      boards[preset] = {};
+      for (const mode of MODES) {
+        const modern = await this.ctx.storage.get(boardKey(preset, mode));
+        const legacy = mode === "standard" ? await this.ctx.storage.get(`lb:${preset}`) : null;
+        const entries = (modern || legacy || []).map((entry) => normalizeEntry({ ...entry, mode }));
+        entries.sort(sortEntries);
+        boards[preset][mode] = entries.slice(0, MAX_ENTRIES).map(publicEntry);
+      }
     }
     return boards;
   }
@@ -92,20 +102,22 @@ export class Leaderboard extends DurableObject {
 
     let renamed = 0;
     for (const preset of PRESET_KEYS) {
-      const key = boardKey(preset);
-      const entries = ((await this.ctx.storage.get(key)) || []).map(normalizeEntry);
-      let changed = false;
-      for (const entry of entries) {
-        for (const contributor of entry.contributors) {
-          if (contributor.token === cleanedToken) {
-            contributor.name = cleanedName;
-            renamed += 1;
-            changed = true;
+      for (const mode of MODES) {
+        const key = boardKey(preset, mode);
+        const entries = ((await this.ctx.storage.get(key)) || []).map((entry) => normalizeEntry({ ...entry, mode }));
+        let changed = false;
+        for (const entry of entries) {
+          for (const contributor of entry.contributors) {
+            if (contributor.token === cleanedToken) {
+              contributor.name = cleanedName;
+              renamed += 1;
+              changed = true;
+            }
           }
         }
-      }
-      if (changed) {
-        await this.ctx.storage.put(key, entries.slice(0, MAX_ENTRIES));
+        if (changed) {
+          await this.ctx.storage.put(key, entries.slice(0, MAX_ENTRIES));
+        }
       }
     }
     return renamed;

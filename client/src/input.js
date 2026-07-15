@@ -1,6 +1,7 @@
-import { neighbors } from "../engine/index.js";
+import { generateBoard, neighbors, noGuessAttemptSeed, solves } from "../engine/index.js";
 
 let nextActionSeq = 1;
+const NO_GUESS_OPTS = Object.freeze({ maxDepth: 4, maxWidth: 6, maxAttempts: 8 });
 
 function cellIdxFromEvent(event) {
   const cell = event.target.closest?.(".cell");
@@ -50,13 +51,43 @@ export function setupInput(board, api, transport) {
   let lastCursorAt = 0;
   let spaceHeld = false;
 
-  function sendAction(action, pendingIndices = null) {
+  async function findNoGuessSeed(state, idx) {
+    if (state.noGuessVerified && state.seed && state.noGuessSafeIdx === idx) {
+      return { seed: state.seed, attempt: 0, layout: null };
+    }
+    const baseSeed = state.seed || crypto.randomUUID();
+    const config = { w: state.w, h: state.h, mineCount: state.mineCount };
+    const maxAttempts = state.w * state.h > 1000 ? 1 : NO_GUESS_OPTS.maxAttempts;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const seed = noGuessAttemptSeed(baseSeed, idx, attempt);
+      const layout = generateBoard(seed, state.w, state.h, state.mineCount, idx);
+      if (solves(layout, idx, config, NO_GUESS_OPTS)) {
+        return { seed, attempt, layout };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    return { failed: true, reason: "no_solvable_board" };
+  }
+
+  async function sendAction(action, pendingIndices = null) {
+    const state = api.getState();
+    let payload = action;
+    if (action.type === "REVEAL" && state.noGuess === true && state.status === 0) {
+      api.setGenerating(true);
+      const result = await findNoGuessSeed(state, action.idx);
+      api.setGenerating(false);
+      if (result.failed) {
+        api.showNotice("No no-guess board found quickly for this click. Start a standard game or use a smaller board.");
+        return null;
+      }
+      payload = { ...action, noGuessSeed: result.seed };
+    }
     const seq = nextActionSeq;
     nextActionSeq += 1;
     if (pendingIndices) {
       api.setPending(pendingIndices, seq);
     }
-    transport.send({ ...action, seq, assist: api.getAssist() });
+    transport.send({ ...payload, seq, assist: api.getAssist() });
     return seq;
   }
 
@@ -116,7 +147,7 @@ export function setupInput(board, api, transport) {
           return;
         }
         if (action.immediate) {
-          sendAction({ type: action.type, idx: action.idx });
+          void sendAction({ type: action.type, idx: action.idx });
           return;
         }
         held = action;
@@ -137,7 +168,7 @@ export function setupInput(board, api, transport) {
       press(indices);
     } else if (event.button === 2) {
       event.preventDefault();
-      sendAction({ type: "FLAG", idx });
+      void sendAction({ type: "FLAG", idx });
     }
   }
 
@@ -147,7 +178,7 @@ export function setupInput(board, api, transport) {
     }
     const idx = cellIdxFromEvent(event);
     if (idx === held.idx) {
-      sendAction({ type: held.type, idx }, held.indices || []);
+      void sendAction({ type: held.type, idx }, held.indices || []);
       clear(false);
       return;
     }
@@ -177,12 +208,12 @@ export function setupInput(board, api, transport) {
       return;
     }
     if (action.immediate) {
-      sendAction({ type: action.type, idx: action.idx });
+      void sendAction({ type: action.type, idx: action.idx });
       return;
     }
     held = { ...action, keyboard: true };
     const indices = action.indices || [];
-    sendAction({ type: action.type, idx: action.idx }, indices);
+    void sendAction({ type: action.type, idx: action.idx }, indices);
     press(indices);
   }
 

@@ -57,6 +57,22 @@
   --correctflag-mark: transparent;
 
   /*
+   * LED digit theme contract. Classic keeps the segment DOM below visible by
+   * resolving these glyphs to no image; themes may override only the glyphs.
+   */
+  --led-digit-0: none;
+  --led-digit-1: none;
+  --led-digit-2: none;
+  --led-digit-3: none;
+  --led-digit-4: none;
+  --led-digit-5: none;
+  --led-digit-6: none;
+  --led-digit-7: none;
+  --led-digit-8: none;
+  --led-digit-9: none;
+  --led-digit-neg: none;
+
+  /*
    * Peer colours are used for board ownership marks on flags. Chrome may also
    * display the same colours in the peer strip, but themes must not override
    * these values.

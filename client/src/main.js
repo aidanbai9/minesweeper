@@ -52,24 +52,36 @@ function configFromParams(params, includeSeed = false) {
   const base = {
     w: params.get("w"),
     h: params.get("h"),
-    mineCount: params.get("m")
+    mineCount: params.get("m"),
+    noGuess: params.get("ng") === "1" || params.get("noguess") === "1",
+    noGuessVerified: params.get("ngv") === "1",
+    noGuessSafeIdx: Number.parseInt(params.get("ngi") || "-1", 10)
   };
   if (includeSeed) {
     base.seed = params.get("s") || params.get("seed") || randomSeed();
   }
-  return normalizeConfig(base);
+  return {
+    ...normalizeConfig(base),
+    noGuess: base.noGuess,
+    noGuessVerified: base.noGuessVerified,
+    noGuessSafeIdx: Number.isInteger(base.noGuessSafeIdx) ? base.noGuessSafeIdx : -1
+  };
 }
 
 function storedConfig() {
   try {
-    return normalizeConfig(JSON.parse(localStorage.getItem(STORAGE_KEY) || "null") || PRESETS.beginner);
+    const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null") || PRESETS.beginner;
+    return { ...normalizeConfig(raw), noGuess: raw.noGuess === true };
   } catch {
-    return normalizeConfig(PRESETS.beginner);
+    return { ...normalizeConfig(PRESETS.beginner), noGuess: false };
   }
 }
 
 function saveConfig(config) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ w: config.w, h: config.h, mineCount: config.mineCount }));
+  localStorage.setItem(
+    STORAGE_KEY,
+    JSON.stringify({ w: config.w, h: config.h, mineCount: config.mineCount, noGuess: config.noGuess === true })
+  );
 }
 
 function cleanName(name) {
@@ -256,6 +268,10 @@ function renderMenu() {
           <label>Height <input name="h" type="number" min="5" max="60" value="${last.h}"></label>
           <label>Mines <input name="m" type="number" min="1" value="${last.mineCount}"></label>
         </div>
+        <label class="menu-checkbox">
+          <input name="noGuess" type="checkbox"${last.noGuess ? " checked" : ""}>
+          <span>No-guessing mode</span>
+        </label>
         <div class="action-row">
           <button data-action="solo">Play solo (ranked)</button>
           <button data-action="offline">Play offline (UNRANKED)</button>
@@ -269,9 +285,10 @@ function renderMenu() {
   const w = panel.querySelector('[name="w"]');
   const h = panel.querySelector('[name="h"]');
   const m = panel.querySelector('[name="m"]');
+  const noGuess = panel.querySelector('[name="noGuess"]');
 
   function currentConfig() {
-    return normalizeConfig({ w: w.value, h: h.value, mineCount: m.value, seed: randomSeed() });
+    return { ...normalizeConfig({ w: w.value, h: h.value, mineCount: m.value, seed: randomSeed() }), noGuess: noGuess.checked };
   }
 
   panel.addEventListener("click", async (event) => {
@@ -281,7 +298,7 @@ function renderMenu() {
       w.value = config.w;
       h.value = config.h;
       m.value = config.mineCount;
-      saveConfig(config);
+      saveConfig({ ...config, noGuess: noGuess.checked });
       return;
     }
 
@@ -301,6 +318,9 @@ function renderMenu() {
     hash.set("w", config.w);
     hash.set("h", config.h);
     hash.set("m", config.mineCount);
+    if (config.noGuess) {
+      hash.set("ng", "1");
+    }
     setHash(hash);
 
     if (action === "together") {
@@ -353,6 +373,9 @@ function bootTransport(transport, options = {}) {
       onReconfig(config) {
         saveConfig(config);
         transport.reconfig(config);
+      },
+      onChatSend(text) {
+        transport.sendChat?.(text);
       }
     });
     detachInput = setupInput(api.board, api, transport);
@@ -384,6 +407,9 @@ function bootTransport(transport, options = {}) {
   });
   transport.on("notice", (text) => {
     api?.showNotice(text);
+  });
+  transport.on("chat", (message) => {
+    api?.addChatMessage(message);
   });
   transport.on("win_recorded", (outcome) => {
     api?.setWinOutcome(outcome);

@@ -1,12 +1,18 @@
 import { DurableObject } from "cloudflare:workers";
-import { PRESETS, applyAction, createGame, normalizeConfig, Status } from "../../engine/src/index.js";
+import { PRESETS, applyAction, createGame, generateBoard, normalizeConfig, solves, Status } from "../../engine/src/index.js";
 import { cleanName, cleanToken, encode, errorMessage, parseJsonMessage, validateInbound } from "./protocol.js";
 
 const COLORS = ["#0000ff", "#008000", "#800080", "#008080", "#800000", "#000080", "#808000", "#ff7f00"];
 const MAX_PLAYERS = 8;
 const GC_AFTER_MS = 2 * 60 * 60 * 1000;
 const RATE_LIMIT_PER_SEC = 20;
+const CHAT_HISTORY_LIMIT = 100;
+const CHAT_MAX_LENGTH = 500;
+const CHAT_RATE_WINDOW_MS = 5000;
+const CHAT_RATE_LIMIT = 5;
+const CHAT_COOLDOWN_MS = 5000;
 const WIN_INELIGIBLE_REASONS = Object.freeze({ ASSIST: "assist", CUSTOM: "custom" });
+const NO_GUESS_SOLVER_OPTS = Object.freeze({ maxDepth: 4, maxWidth: 6 });
 
 function arraysToState(data) {
   if (!data) {
@@ -24,6 +30,7 @@ function arraysToState(data) {
       : null,
     revealed: Uint8Array.from(data.revealed),
     flags: Uint8Array.from(data.flags),
+    noGuess: data.noGuess === true,
     assistTainted: data.assistTainted === true,
     contributors: Array.isArray(data.contributors)
       ? data.contributors.map((contributor) => {
@@ -127,6 +134,38 @@ function rateAllowed(attachment, now) {
   return true;
 }
 
+function chatRateAllowed(attachment, now) {
+  const chatRate = attachment.chatRate || { windowStart: now, count: 0, cooldownUntil: 0 };
+  if (chatRate.cooldownUntil > now) {
+    attachment.chatRate = chatRate;
+    return false;
+  }
+  if (now - chatRate.windowStart >= CHAT_RATE_WINDOW_MS) {
+    chatRate.windowStart = now;
+    chatRate.count = 0;
+    chatRate.cooldownUntil = 0;
+  }
+  if (chatRate.count >= CHAT_RATE_LIMIT) {
+    chatRate.cooldownUntil = now + CHAT_COOLDOWN_MS;
+    attachment.chatRate = chatRate;
+    return false;
+  }
+  chatRate.count += 1;
+  attachment.chatRate = chatRate;
+  return true;
+}
+
+export function cleanChatText(text) {
+  if (typeof text !== "string") {
+    return "";
+  }
+  return text
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function presetKeyForConfig(config) {
   for (const [key, preset] of Object.entries(PRESETS)) {
     if (preset.w === config.w && preset.h === config.h && preset.mineCount === config.mineCount) {
@@ -168,6 +207,7 @@ export class GameRoom extends DurableObject {
       token: "",
       color: COLORS[playerId % COLORS.length],
       rate: { second: 0, count: 0 },
+      chatRate: { windowStart: 0, count: 0, cooldownUntil: 0 },
       cursor: -1
     };
 
@@ -178,6 +218,7 @@ export class GameRoom extends DurableObject {
     this.ctx.acceptWebSocket(server);
     await this.markConnected();
     this.send(server, this.snapshot(state, attachment));
+    this.sendChatHistory(server);
     this.broadcast({ t: "PEER_JOIN", peer: peerFromAttachment(attachment) }, server);
 
     return new Response(null, { status: 101, webSocket: client });
@@ -224,6 +265,12 @@ export class GameRoom extends DurableObject {
     }
 
     const now = Date.now();
+
+    if (message.t === "CHAT") {
+      this.handleChat(ws, attachment, message.text, now);
+      return;
+    }
+
     if (!rateAllowed(attachment, now)) {
       ws.serializeAttachment(attachment);
       return;
@@ -243,21 +290,35 @@ export class GameRoom extends DurableObject {
     }
 
     if (message.t === "RESET") {
-      await this.newGame({ w: state.w, h: state.h, mineCount: state.mineCount }, now);
+      await this.newGame({ w: state.w, h: state.h, mineCount: state.mineCount, noGuess: state.noGuess === true }, now);
       return;
     }
 
     if (message.t === "RECONFIG") {
-      await this.newGame(message.config, now, {
+      await this.newGame({ ...message.config, noGuess: state.noGuess === true }, now, {
         text: `${attachment.name} started a new ${message.config.w}\u00d7${message.config.h} game`,
         except: ws
       });
       return;
     }
 
+    if (state.noGuess === true && state.status === Status.PENDING && message.action.type === "REVEAL") {
+      if (!message.action.noGuessSeed) {
+        this.sendError(ws, "missing_noguess_seed", "No-guess rooms require a verified first-click seed");
+        return;
+      }
+      const board = generateBoard(message.action.noGuessSeed, state.w, state.h, state.mineCount, message.action.idx);
+      const verified = solves(board, message.action.idx, state, NO_GUESS_SOLVER_OPTS);
+      if (!verified) {
+        this.sendError(ws, "bad_noguess_seed", "No-guess seed does not solve this board");
+        return;
+      }
+    }
+
     const result = applyAction(state, {
       type: message.action.type,
       idx: message.action.idx,
+      noGuessSeed: message.action.noGuessSeed,
       assist: message.action.assist,
       playerId: attachment.playerId,
       playerName: attachment.name,
@@ -321,7 +382,7 @@ export class GameRoom extends DurableObject {
       h: params.get("h"),
       mineCount: params.get("m")
     });
-    const state = createGame(config);
+    const state = createGame({ ...config, noGuess: params.get("ng") === "1" || params.get("noguess") === "1" });
     await this.saveState(state);
     await this.bumpAlarm(Date.now());
     return state;
@@ -336,7 +397,13 @@ export class GameRoom extends DurableObject {
   }
 
   async newGame(config, now, notice = null) {
-    const next = createGame({ seed: randomSeed(), w: config.w, h: config.h, mineCount: config.mineCount });
+    const next = createGame({
+      seed: randomSeed(),
+      w: config.w,
+      h: config.h,
+      mineCount: config.mineCount,
+      noGuess: config.noGuess === true
+    });
     await this.saveState(next);
     await this.bumpAlarm(now);
     this.broadcastSnapshot(next);
@@ -382,6 +449,7 @@ export class GameRoom extends DurableObject {
         token: contributor.token
       })),
       preset,
+      mode: state.noGuess === true ? "noguess" : "standard",
       finishedAt: state.endedAt
     };
     const rank = await this.env.LEADERBOARD.getByName("global").recordWin(entry);
@@ -417,6 +485,47 @@ export class GameRoom extends DurableObject {
     }
   }
 
+  handleChat(ws, attachment, rawText, now) {
+    const text = cleanChatText(rawText);
+    if (!text || text.length > CHAT_MAX_LENGTH) {
+      ws.serializeAttachment(attachment);
+      return;
+    }
+
+    if (!chatRateAllowed(attachment, now)) {
+      ws.serializeAttachment(attachment);
+      return;
+    }
+
+    const message = {
+      t: "CHAT",
+      playerId: attachment.playerId,
+      name: attachment.name,
+      color: attachment.color,
+      text,
+      ts: now
+    };
+    this.chatHistory().push(message);
+    if (this.chat.length > CHAT_HISTORY_LIMIT) {
+      this.chat.splice(0, this.chat.length - CHAT_HISTORY_LIMIT);
+    }
+    ws.serializeAttachment(attachment);
+    this.broadcast(message);
+  }
+
+  chatHistory() {
+    if (!Array.isArray(this.chat)) {
+      this.chat = [];
+    }
+    return this.chat;
+  }
+
+  sendChatHistory(ws) {
+    for (const message of this.chatHistory()) {
+      this.send(ws, message);
+    }
+  }
+
   peers(except = null, excludePlayerId = null) {
     const peers = [];
     for (const ws of this.ctx.getWebSockets()) {
@@ -437,6 +546,7 @@ export class GameRoom extends DurableObject {
       t: "SNAPSHOT",
       you: peerFromAttachment(attachment),
       config: { w: state.w, h: state.h, mineCount: state.mineCount },
+      noGuess: state.noGuess === true,
       status: state.status,
       revealed: revealedForSnapshot(state),
       flags: flagsForSnapshot(state),

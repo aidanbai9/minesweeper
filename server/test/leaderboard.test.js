@@ -15,9 +15,9 @@ function leaderboard() {
   return env.LEADERBOARD.getByName("global");
 }
 
-async function storedEntries(preset) {
+async function storedEntries(preset, mode = "standard") {
   const stub = leaderboard();
-  return (await runInDurableObject(stub, async (_instance, state) => state.storage.get(`lb:${preset}`))) || [];
+  return (await runInDurableObject(stub, async (_instance, state) => state.storage.get(`lb:${preset}:${mode}`))) || [];
 }
 
 describe("Leaderboard", () => {
@@ -28,8 +28,8 @@ describe("Leaderboard", () => {
     }
 
     const boards = await lb.getBoards();
-    expect(boards.beginner).toHaveLength(50);
-    expect(boards.beginner.map((item) => item.timeMs)).toEqual(Array.from({ length: 50 }, (_, i) => 1000 + i));
+    expect(boards.beginner.standard).toHaveLength(50);
+    expect(boards.beginner.standard.map((item) => item.timeMs)).toEqual(Array.from({ length: 50 }, (_, i) => 1000 + i));
   });
 
   it("sorts by time and breaks ties by earlier finish time", async () => {
@@ -39,7 +39,7 @@ describe("Leaderboard", () => {
     await lb.recordWin(entry({ timeMs: 900, finishedAt: 200000 }));
 
     const boards = await lb.getBoards();
-    expect(boards.beginner.map((item) => [item.timeMs, item.finishedAt])).toEqual([
+    expect(boards.beginner.standard.map((item) => [item.timeMs, item.finishedAt])).toEqual([
       [800, 300000],
       [900, 200000],
       [900, 300000]
@@ -56,8 +56,8 @@ describe("Leaderboard", () => {
     const boards = await lb.getBoards();
 
     expect(rank).toBeNull();
-    expect(boards.beginner).toHaveLength(50);
-    expect(boards.beginner.some((item) => item.timeMs === 9999)).toBe(false);
+    expect(boards.beginner.standard).toHaveLength(50);
+    expect(boards.beginner.standard.some((item) => item.timeMs === 9999)).toBe(false);
   });
 
   it("keeps each preset board independent", async () => {
@@ -66,10 +66,10 @@ describe("Leaderboard", () => {
     await lb.recordWin(entry({ preset: "expert", timeMs: 2000 }));
 
     const boards = await lb.getBoards();
-    expect(boards.beginner.map((item) => item.timeMs)).toEqual([1000]);
-    expect(boards.expert.map((item) => item.timeMs)).toEqual([2000]);
-    expect(boards.intermediate).toEqual([]);
-    expect(boards.zhenghua).toEqual([]);
+    expect(boards.beginner.standard.map((item) => item.timeMs)).toEqual([1000]);
+    expect(boards.expert.standard.map((item) => item.timeMs)).toEqual([2000]);
+    expect(boards.intermediate.standard).toEqual([]);
+    expect(boards.zhenghua.standard).toEqual([]);
   });
 
   it("serves contributor names without exposing session tokens", async () => {
@@ -78,7 +78,7 @@ describe("Leaderboard", () => {
 
     const boards = await lb.getBoards();
 
-    expect(boards.beginner[0].contributors).toEqual([{ name: "Ada" }]);
+    expect(boards.beginner.standard[0].contributors).toEqual([{ name: "Ada" }]);
     expect(JSON.stringify(boards)).not.toContain("private-token");
   });
 
@@ -100,6 +100,20 @@ describe("Leaderboard", () => {
     expect(after.map((item) => item.contributors[0].name)).toEqual(["aidan", "Ada Prime", "Ada Prime"]);
   });
 
+  it("keeps standard and no-guess boards independent", async () => {
+    const lb = leaderboard();
+    for (let i = 0; i < 60; i += 1) {
+      await lb.recordWin(entry({ mode: "noguess", timeMs: 1000 + i, finishedAt: 100000 + i }));
+    }
+    await lb.recordWin(entry({ mode: "standard", timeMs: 5000, finishedAt: 200000 }));
+
+    const boards = await lb.getBoards();
+    expect(boards.beginner.noguess).toHaveLength(50);
+    expect(boards.beginner.standard.map((item) => item.timeMs)).toEqual([5000]);
+    expect(await storedEntries("beginner", "noguess")).toHaveLength(50);
+    expect(await storedEntries("beginner", "standard")).toHaveLength(1);
+  });
+
   it("serves GET /leaderboard as JSON with CORS and cache headers", async () => {
     const response = await SELF.fetch("https://mines.test/leaderboard");
     const body = await response.json();
@@ -109,10 +123,10 @@ describe("Leaderboard", () => {
     expect(response.headers.get("Cache-Control")).toBe("public, max-age=30");
     expect(response.headers.get("Content-Type")).toContain("application/json");
     expect(body).toEqual({
-      beginner: [],
-      intermediate: [],
-      expert: [],
-      zhenghua: []
+      beginner: { standard: [], noguess: [] },
+      intermediate: { standard: [], noguess: [] },
+      expert: { standard: [], noguess: [] },
+      zhenghua: { standard: [], noguess: [] }
     });
   });
 });

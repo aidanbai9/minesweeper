@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SELF, env, runInDurableObject } from "cloudflare:test";
-import { Status, applyAction, createGame, neighbors } from "../../engine/src/index.js";
+import { Status, applyAction, createGame, generateNoGuess, neighbors } from "../../engine/src/index.js";
 import { deserializeState, serializeState } from "../src/GameRoom.js";
 
 function delay(ms) {
@@ -128,11 +128,16 @@ function playingState(board) {
   };
 }
 
-async function leaderboardEntries(preset) {
+async function leaderboardEntries(preset, mode = "standard") {
   const stub = env.LEADERBOARD.getByName("global");
   return (
-    (await runInDurableObject(stub, async (_instance, state) => state.storage.get(`lb:${preset}`))) || []
+    (await runInDurableObject(stub, async (_instance, state) => state.storage.get(`lb:${preset}:${mode}`))) || []
   );
+}
+
+async function storedRoomKeys(code) {
+  const stub = env.GAME.getByName(code);
+  return runInDurableObject(stub, async (_instance, state) => [...(await state.storage.list()).keys()]);
 }
 
 function presetWinState({ w, h, mineCount, mineStart = 0, startedAt = 1000 }) {
@@ -214,6 +219,155 @@ describe("state serialization", () => {
 });
 
 describe("GameRoom", () => {
+  describe("chat", () => {
+    it("broadcasts server-stamped chat to every socket in the same room", async () => {
+      const code = "chat2234";
+      const a = await connect(code, "?seed=chat&w=9&h=9&m=10");
+      const b = await connect(code);
+      await a.next((message) => message.t === "SNAPSHOT");
+      await b.next((message) => message.t === "SNAPSHOT");
+      await setName(a, "Ada");
+
+      const before = Date.now();
+      a.send({ t: "CHAT", text: "hello room", name: "Mallory", color: "#ffffff", playerId: 99, ts: 1 });
+      const chatA = await a.next((message) => message.t === "CHAT");
+      const chatB = await b.next((message) => message.t === "CHAT");
+
+      expect(chatA).toEqual(chatB);
+      expect(chatA).toMatchObject({
+        t: "CHAT",
+        playerId: 0,
+        name: "Ada",
+        color: "#0000ff",
+        text: "hello room"
+      });
+      expect(chatA.ts).toBeGreaterThanOrEqual(before);
+      expect(chatA.ts).not.toBe(1);
+      expect(chatA.name).not.toBe("Mallory");
+      expect(chatA.color).not.toBe("#ffffff");
+
+      a.close();
+      b.close();
+    });
+
+    it("does not broadcast chat across rooms", async () => {
+      const a = await connect("chat2235", "?seed=chat&w=9&h=9&m=10");
+      const sameRoom = await connect("chat2235");
+      const otherRoom = await connect("chat2236", "?seed=other&w=9&h=9&m=10");
+      await a.next((message) => message.t === "SNAPSHOT");
+      await sameRoom.next((message) => message.t === "SNAPSHOT");
+      await otherRoom.next((message) => message.t === "SNAPSHOT");
+
+      a.send({ t: "CHAT", text: "same room only" });
+      await sameRoom.next((message) => message.t === "CHAT" && message.text === "same room only");
+
+      expect(await otherRoom.noMessage((message) => message.t === "CHAT")).toBe(true);
+
+      a.close();
+      sameRoom.close();
+      otherRoom.close();
+    });
+
+    it("rejects empty and over-length chat without broadcasting raw text", async () => {
+      const code = "chat2237";
+      const a = await connect(code, "?seed=chat&w=9&h=9&m=10");
+      const b = await connect(code);
+      await a.next((message) => message.t === "SNAPSHOT");
+      await b.next((message) => message.t === "SNAPSHOT");
+
+      a.send({ t: "CHAT", text: " \n\t " });
+      expect(await a.noMessage((message) => message.t === "CHAT")).toBe(true);
+      expect(await b.noMessage((message) => message.t === "CHAT")).toBe(true);
+
+      const raw = "x".repeat(600);
+      a.send({ t: "CHAT", text: raw });
+      expect(await a.noMessage((message) => message.t === "CHAT" && message.text === raw)).toBe(true);
+      expect(await b.noMessage((message) => message.t === "CHAT" && message.text === raw)).toBe(true);
+
+      a.close();
+      b.close();
+    });
+
+    it("cleans control characters and collapses long newline runs", async () => {
+      const code = "chat2238";
+      const a = await connect(code, "?seed=chat&w=9&h=9&m=10");
+      await a.next((message) => message.t === "SNAPSHOT");
+
+      a.send({ t: "CHAT", text: "\u0000one\n\n\n\n\ttwo\u0007" });
+      const chat = await a.next((message) => message.t === "CHAT");
+
+      expect(chat.text).toBe("one\n\n\ttwo");
+
+      a.close();
+    });
+
+    it("rate-limits chat without disconnecting or broadcasting excess messages", async () => {
+      const code = "chat2239";
+      const a = await connect(code, "?seed=chat&w=9&h=9&m=10");
+      const b = await connect(code);
+      await a.next((message) => message.t === "SNAPSHOT");
+      await b.next((message) => message.t === "SNAPSHOT");
+
+      for (let i = 0; i < 20; i += 1) {
+        a.send({ t: "CHAT", text: `msg ${i}` });
+      }
+
+      const received = [];
+      for (let i = 0; i < 5; i += 1) {
+        received.push(await b.next((message) => message.t === "CHAT"));
+      }
+
+      expect(received.map((message) => message.text)).toEqual(["msg 0", "msg 1", "msg 2", "msg 3", "msg 4"]);
+      expect(await b.noMessage((message) => message.t === "CHAT")).toBe(true);
+
+      a.send({ t: "ACTION", seq: 123, action: { type: "FLAG", idx: 0 } });
+      const events = await a.next((message) => message.t === "EVENTS" && message.seq === 123);
+      expect(events.events).toEqual([{ t: "FLAG", idx: 0, playerId: 0, on: true }]);
+
+      a.close();
+      b.close();
+    });
+
+    it("sends recent chat history after the snapshot to late joiners", async () => {
+      const code = "chat2242";
+      const a = await connect(code, "?seed=chat&w=9&h=9&m=10");
+      await a.next((message) => message.t === "SNAPSHOT");
+
+      a.send({ t: "CHAT", text: "first" });
+      await a.next((message) => message.t === "CHAT" && message.text === "first");
+      a.send({ t: "CHAT", text: "second" });
+      await a.next((message) => message.t === "CHAT" && message.text === "second");
+
+      const late = await connect(code);
+      const snapshot = await late.next((message) => message.t === "SNAPSHOT");
+      const first = await late.next((message) => message.t === "CHAT");
+      const second = await late.next((message) => message.t === "CHAT");
+
+      expect(snapshot.t).toBe("SNAPSHOT");
+      expect([first.text, second.text]).toEqual(["first", "second"]);
+
+      a.close();
+      late.close();
+    });
+
+    it("does not alter game state, persist chat, or touch the leaderboard", async () => {
+      const code = "chat2243";
+      const a = await connect(code, "?seed=chat&w=9&h=9&m=10");
+      await a.next((message) => message.t === "SNAPSHOT");
+      const beforeState = await storedRoomState(code);
+      const beforeEntries = await leaderboardEntries("beginner");
+
+      a.send({ t: "CHAT", text: "orthogonal" });
+      await a.next((message) => message.t === "CHAT" && message.text === "orthogonal");
+
+      expect(await storedRoomState(code)).toEqual(beforeState);
+      expect(await leaderboardEntries("beginner")).toEqual(beforeEntries);
+      expect(await storedRoomKeys(code)).not.toContain("chat");
+
+      a.close();
+    });
+  });
+
   it("lets two sockets in one room see the same board deltas", async () => {
     const code = "abcde234";
     const a = await connect(code, "?seed=same&w=9&h=9&m=10");
@@ -333,6 +487,45 @@ describe("GameRoom", () => {
     a.close();
   });
 
+  it("verifies a valid no-guess first reveal seed and reports the room mode", async () => {
+    const code = "noguesva";
+    const a = await connect(code, "?seed=ng&w=9&h=9&m=10&ng=1");
+    const snapshot = await a.next((message) => message.t === "SNAPSHOT");
+    expect(snapshot.noGuess).toBe(true);
+
+    const found = generateNoGuess("client-ng", 9, 9, 10, 40, { maxDepth: 4, maxWidth: 6, maxAttempts: 5 });
+    expect(found.failed).toBeUndefined();
+
+    a.send({ t: "ACTION", action: { type: "REVEAL", idx: 40, noGuessSeed: found.seed } });
+    const events = await a.next((message) => message.t === "EVENTS");
+    const stored = await storedRoomState(code);
+
+    expect(events.events.some((event) => event.t === "START")).toBe(true);
+    expect(events.events.some((event) => event.t === "OPEN")).toBe(true);
+    expect(stored.noGuess).toBe(true);
+    expect(stored.seed).toBe(found.seed);
+    expect(frameHasMines(events)).toBe(false);
+
+    a.close();
+  });
+
+  it("rejects a bogus no-guess seed without starting the game", async () => {
+    const code = "noguesvb";
+    const a = await connect(code, "?seed=ng&w=9&h=9&m=10&ng=1");
+    await a.next((message) => message.t === "SNAPSHOT");
+
+    a.send({ t: "ACTION", action: { type: "REVEAL", idx: 40, noGuessSeed: "bad-8" } });
+    const error = await a.next((message) => message.t === "ERROR");
+    const stored = await storedRoomState(code);
+
+    expect(error.code).toBe("bad_noguess_seed");
+    expect(stored.status).toBe(Status.PENDING);
+    expect(stored.board).toBeNull();
+    expect(a.history.some(frameHasMines)).toBe(false);
+
+    a.close();
+  });
+
   it("restores full state after reconnecting to an idle room", async () => {
     const code = "abcde238";
     const a = await connect(code, "?seed=reconnect&w=9&h=9&m=10");
@@ -379,6 +572,22 @@ describe("GameRoom", () => {
 
     a.close();
     b.close();
+  });
+
+  it("keeps the no-guess room flag through reset and reconfig snapshots", async () => {
+    const code = "noguesvc";
+    const a = await connect(code, "?seed=ng&w=9&h=9&m=10&ng=1");
+    await a.next((message) => message.t === "SNAPSHOT");
+
+    a.send({ t: "RESET" });
+    const reset = await a.next((message) => message.t === "SNAPSHOT");
+    expect(reset.noGuess).toBe(true);
+
+    a.send({ t: "RECONFIG", config: { w: 16, h: 16, mineCount: 40 } });
+    const reconfig = await a.next((message) => message.t === "SNAPSHOT" && message.config.w === 16);
+    expect(reconfig.noGuess).toBe(true);
+
+    a.close();
   });
 
   it("rejects impossible reconfig values without closing the socket or changing state", async () => {
@@ -598,6 +807,47 @@ describe("GameRoom", () => {
 
     expect(entries).toHaveLength(1);
     expect(entries[0].contributors).toEqual([{ name: "Solo", token: "tok-solo" }]);
+
+    a.close();
+  });
+
+  it("records a no-guess preset win on the no-guess board only", async () => {
+    const code = "ngranksa";
+    const a = await connect(code, "?seed=rank&w=30&h=16&m=99&ng=1");
+    await a.next((message) => message.t === "SNAPSHOT");
+    await setName(a, "NoGuess", "tok-ng");
+
+    const { state, lastSafe } = presetWinState({ w: 30, h: 16, mineCount: 99 });
+    state.noGuess = true;
+    await replaceRoomState(code, state);
+
+    a.send({ t: "ACTION", action: { type: "REVEAL", idx: lastSafe, noGuessSeed: "ignored-after-start" } });
+    await a.next((message) => message.t === "EVENTS" && message.events.some((event) => event.t === "WIN"));
+    await a.next((message) => message.t === "WIN_RECORDED");
+
+    expect(await leaderboardEntries("expert", "standard")).toEqual([]);
+    expect(await leaderboardEntries("expert", "noguess")).toHaveLength(1);
+
+    a.close();
+  });
+
+  it("does not record an assisted no-guess win on either board", async () => {
+    const code = "ngranksb";
+    const a = await connect(code, "?seed=rank&w=30&h=16&m=99&ng=1");
+    await a.next((message) => message.t === "SNAPSHOT");
+
+    const { state, lastSafe } = presetWinState({ w: 30, h: 16, mineCount: 99 });
+    state.noGuess = true;
+    await replaceRoomState(code, state);
+
+    a.send({ t: "ACTION", action: { type: "CHORD", idx: 0, assist: { autoChord: true, autoFlag: false } } });
+    await a.next((message) => message.t === "EVENTS");
+    a.send({ t: "ACTION", action: { type: "REVEAL", idx: lastSafe } });
+    await a.next((message) => message.t === "EVENTS" && message.events.some((event) => event.t === "WIN"));
+    await a.next((message) => message.t === "WIN_INELIGIBLE");
+
+    expect(await leaderboardEntries("expert", "standard")).toEqual([]);
+    expect(await leaderboardEntries("expert", "noguess")).toEqual([]);
 
     a.close();
   });
