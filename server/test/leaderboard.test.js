@@ -15,6 +15,10 @@ function leaderboard() {
   return env.LEADERBOARD.getByName("global");
 }
 
+function contributor(name, token = `tok-${name}`) {
+  return { name, token };
+}
+
 async function storedEntries(preset, mode = "standard") {
   const stub = leaderboard();
   return (await runInDurableObject(stub, async (_instance, state) => state.storage.get(`lb:${preset}:${mode}`))) || [];
@@ -24,7 +28,7 @@ describe("Leaderboard", () => {
   it("keeps exactly the 50 fastest entries when inserting 60", async () => {
     const lb = leaderboard();
     for (let i = 0; i < 60; i += 1) {
-      await lb.recordWin(entry({ timeMs: 1000 + i, finishedAt: 100000 + i }));
+      await lb.recordWin(entry({ timeMs: 1000 + i, finishedAt: 100000 + i, contributors: [contributor(`Player ${i}`)] }));
     }
 
     const boards = await lb.getBoards();
@@ -49,10 +53,10 @@ describe("Leaderboard", () => {
   it("drops a slow entry that does not make the top 50", async () => {
     const lb = leaderboard();
     for (let i = 0; i < 50; i += 1) {
-      await lb.recordWin(entry({ timeMs: 1000 + i, finishedAt: 100000 + i }));
+      await lb.recordWin(entry({ timeMs: 1000 + i, finishedAt: 100000 + i, contributors: [contributor(`Player ${i}`)] }));
     }
 
-    const rank = await lb.recordWin(entry({ timeMs: 9999, finishedAt: 999999 }));
+    const rank = await lb.recordWin(entry({ timeMs: 9999, finishedAt: 999999, contributors: [contributor("Slowpoke")] }));
     const boards = await lb.getBoards();
 
     expect(rank).toBeNull();
@@ -103,7 +107,9 @@ describe("Leaderboard", () => {
   it("keeps standard and no-guess boards independent", async () => {
     const lb = leaderboard();
     for (let i = 0; i < 60; i += 1) {
-      await lb.recordWin(entry({ mode: "noguess", timeMs: 1000 + i, finishedAt: 100000 + i }));
+      await lb.recordWin(
+        entry({ mode: "noguess", timeMs: 1000 + i, finishedAt: 100000 + i, contributors: [contributor(`No Guess ${i}`)] })
+      );
     }
     await lb.recordWin(entry({ mode: "standard", timeMs: 5000, finishedAt: 200000 }));
 
@@ -112,6 +118,123 @@ describe("Leaderboard", () => {
     expect(boards.beginner.standard.map((item) => item.timeMs)).toEqual([5000]);
     expect(await storedEntries("beginner", "noguess")).toHaveLength(50);
     expect(await storedEntries("beginner", "standard")).toHaveLength(1);
+  });
+
+  it("rejects a contributor's 7th slower time and keeps their 6 faster entries", async () => {
+    const lb = leaderboard();
+    for (let i = 0; i < 6; i += 1) {
+      await lb.recordWin(entry({ timeMs: 1000 + i, contributors: [contributor("Ada", `tok-a-${i}`)] }));
+    }
+
+    const rank = await lb.recordWin(entry({ timeMs: 2000, contributors: [contributor("Ada", "tok-a-slow")] }));
+    const boards = await lb.getBoards();
+
+    expect(rank).toBeNull();
+    expect(boards.beginner.standard.map((item) => item.timeMs)).toEqual([1000, 1001, 1002, 1003, 1004, 1005]);
+  });
+
+  it("accepts a contributor's 7th faster time and evicts their slowest prior entry", async () => {
+    const lb = leaderboard();
+    for (let i = 0; i < 6; i += 1) {
+      await lb.recordWin(entry({ timeMs: 1000 + i, contributors: [contributor("Ada", `tok-a-${i}`)] }));
+    }
+
+    const rank = await lb.recordWin(entry({ timeMs: 900, contributors: [contributor("Ada", "tok-a-fast")] }));
+    const boards = await lb.getBoards();
+
+    expect(rank).toBe(1);
+    expect(boards.beginner.standard.map((item) => item.timeMs)).toEqual([900, 1000, 1001, 1002, 1003, 1004]);
+  });
+
+  it("keeps only a contributor's 6 fastest Beginner wins after 8 runs", async () => {
+    const lb = leaderboard();
+    for (const timeMs of [1000, 1100, 900, 1200, 800, 1300, 700, 1400]) {
+      await lb.recordWin(entry({ timeMs, contributors: [contributor("aidan", `tok-aidan-${timeMs}`)] }));
+    }
+
+    const boards = await lb.getBoards();
+
+    expect(boards.beginner.standard.map((item) => item.timeMs)).toEqual([700, 800, 900, 1000, 1100, 1200]);
+    expect(boards.beginner.standard.every((item) => item.contributors[0].name === "aidan")).toBe(true);
+  });
+
+  it("caps different contributor names independently on the same board", async () => {
+    const lb = leaderboard();
+    for (let i = 0; i < 6; i += 1) {
+      await lb.recordWin(entry({ timeMs: 1000 + i, contributors: [contributor("Ada", `tok-a-${i}`)] }));
+      await lb.recordWin(entry({ timeMs: 2000 + i, contributors: [contributor("Bob", `tok-b-${i}`)] }));
+    }
+
+    await lb.recordWin(entry({ timeMs: 1500, contributors: [contributor("Bob", "tok-b-fast")] }));
+    const boards = await lb.getBoards();
+    const entries = boards.beginner.standard;
+
+    expect(entries.filter((item) => item.contributors.some((itemContributor) => itemContributor.name === "Ada"))).toHaveLength(6);
+    expect(entries.filter((item) => item.contributors.some((itemContributor) => itemContributor.name === "Bob"))).toHaveLength(6);
+    expect(entries.map((item) => item.timeMs)).not.toContain(2005);
+  });
+
+  it("rejects a group entry when one capped contributor already has 6 faster times", async () => {
+    const lb = leaderboard();
+    for (let i = 0; i < 6; i += 1) {
+      await lb.recordWin(entry({ timeMs: 1000 + i, contributors: [contributor("Ada", `tok-a-${i}`)] }));
+    }
+
+    const rank = await lb.recordWin(entry({ timeMs: 2000, contributors: [contributor("Ada", "tok-a-group"), contributor("Bob")] }));
+    const boards = await lb.getBoards();
+
+    expect(rank).toBeNull();
+    expect(boards.beginner.standard).toHaveLength(6);
+    expect(boards.beginner.standard.some((item) => item.contributors.some((itemContributor) => itemContributor.name === "Bob"))).toBe(false);
+  });
+
+  it("accepts a group entry when one contributor has room and the other evicts a slower entry", async () => {
+    const lb = leaderboard();
+    for (let i = 0; i < 6; i += 1) {
+      await lb.recordWin(entry({ timeMs: 3000 + i, contributors: [contributor("Bob", `tok-b-${i}`)] }));
+    }
+
+    await lb.recordWin(entry({ timeMs: 2000, contributors: [contributor("Ada"), contributor("Bob", "tok-b-group")] }));
+    const boards = await lb.getBoards();
+    const entries = boards.beginner.standard;
+
+    expect(entries.map((item) => item.timeMs)).toEqual([2000, 3000, 3001, 3002, 3003, 3004]);
+    expect(entries.filter((item) => item.contributors.some((itemContributor) => itemContributor.name === "Ada"))).toHaveLength(1);
+    expect(entries.filter((item) => item.contributors.some((itemContributor) => itemContributor.name === "Bob"))).toHaveLength(6);
+  });
+
+  it("allows rename to temporarily exceed the cap and trims on the next insert for that name", async () => {
+    const lb = leaderboard();
+    for (let i = 0; i < 6; i += 1) {
+      await lb.recordWin(entry({ timeMs: 1000 + i, contributors: [contributor("Bob", `tok-b-${i}`)] }));
+      await lb.recordWin(entry({ timeMs: 2000 + i, contributors: [contributor("Ada", "tok-a")] }));
+    }
+
+    const renamed = await lb.renameToken("tok-a", "Bob");
+    const afterRename = await storedEntries("beginner");
+
+    expect(renamed).toBe(6);
+    expect(afterRename).toHaveLength(12);
+    expect(afterRename.filter((item) => item.contributors.some((itemContributor) => itemContributor.name === "Bob"))).toHaveLength(12);
+
+    await lb.recordWin(entry({ timeMs: 500, contributors: [contributor("Bob", "tok-b-best")] }));
+    const boards = await lb.getBoards();
+
+    expect(boards.beginner.standard.map((item) => item.timeMs)).toEqual([500, 1000, 1001, 1002, 1003, 1004]);
+    expect(boards.beginner.standard).toHaveLength(6);
+  });
+
+  it("still applies global top-50 truncation after per-name logic", async () => {
+    const lb = leaderboard();
+    for (let i = 0; i < 50; i += 1) {
+      await lb.recordWin(entry({ timeMs: 1000 + i, finishedAt: 100000 + i, contributors: [contributor(`Player ${i}`)] }));
+    }
+
+    await lb.recordWin(entry({ timeMs: 900, finishedAt: 200000, contributors: [contributor("Ada")] }));
+    const boards = await lb.getBoards();
+
+    expect(boards.beginner.standard).toHaveLength(50);
+    expect(boards.beginner.standard.map((item) => item.timeMs)).toEqual([900, ...Array.from({ length: 49 }, (_, i) => 1000 + i)]);
   });
 
   it("serves GET /leaderboard as JSON with CORS and cache headers", async () => {

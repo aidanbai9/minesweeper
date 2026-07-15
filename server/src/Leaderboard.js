@@ -3,6 +3,7 @@ import { PRESETS } from "../../engine/src/index.js";
 import { cleanName, cleanToken } from "./protocol.js";
 
 const MAX_ENTRIES = 50;
+const MAX_ENTRIES_PER_CONTRIBUTOR = 6;
 const PRESET_KEYS = Object.freeze(Object.keys(PRESETS));
 const MODES = Object.freeze(["standard", "noguess"]);
 
@@ -55,6 +56,49 @@ function sortEntries(a, b) {
   return a.timeMs - b.timeMs || a.finishedAt - b.finishedAt;
 }
 
+function sortEntriesSlowestFirst(a, b) {
+  return b.timeMs - a.timeMs || b.finishedAt - a.finishedAt;
+}
+
+function contributorNames(entry) {
+  return new Set(entry.contributors.map((contributor) => contributor.name));
+}
+
+function hasContributor(entry, name) {
+  return entry.contributors.some((contributor) => contributor.name === name);
+}
+
+function isFasterThan(entry, existing) {
+  return entry.timeMs < existing.timeMs;
+}
+
+function applyContributorCap(entries, entry) {
+  let kept = [...entries];
+  for (const name of contributorNames(entry)) {
+    const existing = kept.filter((item) => hasContributor(item, name));
+    const evictCount = existing.length + 1 - MAX_ENTRIES_PER_CONTRIBUTOR;
+    if (evictCount <= 0) {
+      continue;
+    }
+
+    const evicted = existing.sort(sortEntriesSlowestFirst).slice(0, evictCount);
+    if (evicted.some((item) => !isFasterThan(entry, item))) {
+      return null;
+    }
+
+    const evictedSet = new Set(evicted);
+    kept = kept.filter((item) => !evictedSet.has(item));
+  }
+
+  for (const name of contributorNames(entry)) {
+    if (kept.filter((item) => hasContributor(item, name)).length + 1 > MAX_ENTRIES_PER_CONTRIBUTOR) {
+      return null;
+    }
+  }
+
+  return kept;
+}
+
 function publicEntry(entry) {
   return {
     timeMs: entry.timeMs,
@@ -69,9 +113,17 @@ export class Leaderboard extends DurableObject {
     const normalized = normalizeEntry(entry);
     const key = boardKey(normalized.preset, normalized.mode);
     const entries = ((await this.ctx.storage.get(key)) || []).map(normalizeEntry);
-    entries.push(normalized);
-    entries.sort(sortEntries);
-    const kept = entries.slice(0, MAX_ENTRIES);
+    const topCandidates = [...entries, normalized].sort(sortEntries);
+    if (!topCandidates.slice(0, MAX_ENTRIES).includes(normalized)) {
+      return null;
+    }
+
+    const capped = applyContributorCap(entries, normalized);
+    if (!capped) {
+      return null;
+    }
+
+    const kept = [...capped, normalized].sort(sortEntries).slice(0, MAX_ENTRIES);
     await this.ctx.storage.put(key, kept);
 
     const rank = kept.indexOf(normalized);
@@ -116,6 +168,9 @@ export class Leaderboard extends DurableObject {
           }
         }
         if (changed) {
+          // A rename can merge two already-full names and temporarily put one name
+          // over the per-board cap. Do not delete entries here; the cap is enforced
+          // only when future wins are inserted so renames never silently destroy runs.
           await this.ctx.storage.put(key, entries.slice(0, MAX_ENTRIES));
         }
       }
