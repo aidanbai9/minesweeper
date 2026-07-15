@@ -734,7 +734,10 @@ export function mountGame(root, initialState, handlers) {
     const isWrong = state.wrongFlags.has(idx);
     const isLostMine = state.status === STATUS.LOST && isMine;
     const isWonMine = state.status === STATUS.WON && isMine;
-    const flagged = state.flags[idx] > 0 || isWonMine;
+    const hasFlag = state.flags[idx] > 0;
+    const isDetonated = state.status === STATUS.LOST && idx === state.lostAt;
+    const isCorrectLostFlag = isLostMine && hasFlag && !isDetonated;
+    const flagged = hasFlag || isWonMine || isCorrectLostFlag;
     const isPending = pending.has(idx);
     const count = state.counts[idx];
 
@@ -742,14 +745,21 @@ export function mountGame(root, initialState, handlers) {
     cell.innerHTML = "";
     delete cell.dataset.count;
 
-    if (isWrong) {
+    if (isDetonated) {
+      cell.classList.add("revealed", "mine-cell", "detonated");
+      cell.innerHTML = mineSvg();
+    } else if (isWrong) {
       cell.classList.add("revealed", "wrong-flag");
       cell.innerHTML = wrongFlagSvg();
+    } else if (isCorrectLostFlag) {
+      cell.classList.add("unrevealed", "flagged", "correct-flag");
+      const ownerClass = flagOwnerClass(idx);
+      if (ownerClass) {
+        cell.classList.add("peer-flag", ownerClass);
+      }
+      cell.innerHTML = correctFlagSvg();
     } else if (isLostMine) {
       cell.classList.add("revealed", "mine-cell");
-      if (idx === state.lostAt) {
-        cell.classList.add("detonated");
-      }
       cell.innerHTML = mineSvg();
     } else if (flagged && !isRevealed) {
       cell.classList.add("unrevealed", "flagged");
@@ -924,6 +934,9 @@ export function mountGame(root, initialState, handlers) {
         state.wrongFlags = new Set(event.wrongFlags || []);
         for (const idx of event.mines) changed.add(idx);
         for (const idx of event.wrongFlags || []) changed.add(idx);
+        for (let idx = 0; idx < state.flags.length; idx += 1) {
+          if (state.flags[idx]) changed.add(idx);
+        }
       } else if (event.t === "WIN") {
         state.status = STATUS.WON;
         state.endedAt = event.endedAt;

@@ -13,7 +13,7 @@
   --flat-tile-wrong-flag: url("../../assets/themes/flat/fake_flagged_tile_1.png");
   --flat-tile-mine: url("../../assets/themes/flat/mine_tile.png");
   --flat-tile-detonated: url("../../assets/themes/flat/mine_tile_clicked.png");
-  --flat-tile-correct-flag: url("../../assets/themes/flat/light_tile_start_1.png");
+  --flat-tile-correct-flag: url("../../assets/themes/flat/flagged_tile_1.png");
   --flat-tile-uncovered: url("../../assets/themes/flat/uncovered_tile_1.png");
 
   --cell-covered-bg: #bdbdbd;
