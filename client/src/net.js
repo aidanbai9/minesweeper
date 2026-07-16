@@ -159,7 +159,7 @@ export function createNetTransport({ code, config, name = "Player", token = "" }
     },
     reconfig(config) {
       outbox = [];
-      sendRaw({ t: "RECONFIG", config: { w: config.w, h: config.h, mineCount: config.mineCount } });
+      sendRaw({ t: "RECONFIG", config: { w: config.w, h: config.h, mineCount: config.mineCount, noGuess: config.noGuess === true } });
     },
     rename(name) {
       displayName = name;

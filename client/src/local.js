@@ -1,5 +1,5 @@
 import { peerFallbackColor } from "./presence.js";
-import { applyAction, createGame, normalizeConfig, Status } from "../engine/index.js";
+import { applyAction, createGame, isNoGuessConfig, normalizeConfig, Status } from "../engine/index.js";
 
 function makeEmitter() {
   const listeners = new Map();
@@ -103,7 +103,7 @@ export function createLocalTransport(config) {
   const you = { playerId: 0, name: "You", color: peerFallbackColor(0) };
   let gameConfig = {
     ...normalizeConfig(config),
-    noGuess: config?.noGuess === true,
+    noGuess: config?.noGuess === true && isNoGuessConfig(config),
     noGuessVerified: config?.noGuessVerified === true,
     noGuessSafeIdx: Number.isInteger(config?.noGuessSafeIdx) ? config.noGuessSafeIdx : -1
   };
@@ -123,7 +123,7 @@ export function createLocalTransport(config) {
         gameConfig = {
           ...gameConfig,
           seed: action.noGuessSeed,
-          noGuess: true,
+          noGuess: isNoGuessConfig(gameConfig),
           noGuessVerified: true,
           noGuessSafeIdx: action.idx
         };
@@ -139,7 +139,7 @@ export function createLocalTransport(config) {
     reconfig(config) {
       gameConfig = {
         ...normalizeConfig({ ...config, seed: randomSeed() }),
-        noGuess: config.noGuess === true,
+        noGuess: config.noGuess === true && isNoGuessConfig(config),
         noGuessVerified: false,
         noGuessSafeIdx: -1
       };

@@ -1,7 +1,7 @@
 import { createChrome } from "./chrome.js";
 import { createPresence } from "./presence.js";
 import { CHAT_ENABLED, NO_GUESS_ENABLED } from "./config.js";
-import { AUTO_FLAG, PRESETS } from "../engine/index.js";
+import { AUTO_FLAG, PRESETS, isNoGuessConfig, isNoGuessPreset } from "../engine/index.js";
 
 const STATUS = { PENDING: 0, PLAYING: 1, WON: 2, LOST: 3 };
 const CELL_SIZE_OPTIONS = ["100", "150", "200"];
@@ -180,9 +180,10 @@ function settingsHtml(state, prefs, options = {}) {
             NO_GUESS_ENABLED
               ? `
                 <label class="game-mode-toggle">
-                  <input name="settings-no-guess" type="checkbox"${state.noGuess ? " checked" : ""}>
+                  <input name="settings-no-guess" type="checkbox"${state.noGuess ? " checked" : ""}${isNoGuessConfig(state) ? "" : " disabled"}>
                   <span>No-guessing mode</span>
                 </label>
+                <p class="noguess-note" data-settings-noguess-note${isNoGuessConfig(state) ? " hidden" : ""}>No-guess is currently expert-only.</p>
               `
               : ""
           }
@@ -501,6 +502,7 @@ export function mountGame(root, initialState, handlers) {
   const heightInput = settingsBackdrop.querySelector('[name="settings-h"]');
   const minesInput = settingsBackdrop.querySelector('[name="settings-m"]');
   const noGuessInput = settingsBackdrop.querySelector('[name="settings-no-guess"]');
+  const noGuessNote = settingsBackdrop.querySelector("[data-settings-noguess-note]");
   const renameForm = settingsBackdrop.querySelector("[data-rename-form]");
   const displayNameInput = settingsBackdrop.querySelector('[name="displayName"]');
   const renameError = settingsBackdrop.querySelector("[data-rename-error]");
@@ -546,8 +548,20 @@ export function mountGame(root, initialState, handlers) {
 
     mineRange.textContent = dimensionsValid ? `Valid mines: 1-${maxMines}` : "Width and height must be 5-60";
     minesInput.max = dimensionsValid ? String(maxMines) : "";
+    const config = valid ? { w, h, mineCount } : null;
+    const noGuessAvailable = Boolean(config && NO_GUESS_ENABLED && isNoGuessConfig(config));
+    if (noGuessInput) {
+      noGuessInput.disabled = !noGuessAvailable;
+      noGuessInput.closest(".game-mode-toggle")?.classList.toggle("disabled", !noGuessAvailable);
+      if (!noGuessAvailable) {
+        noGuessInput.checked = false;
+      }
+    }
+    if (noGuessNote) {
+      noGuessNote.hidden = noGuessAvailable;
+    }
     applyButton.disabled = !valid;
-    return valid ? { w, h, mineCount, noGuess: NO_GUESS_ENABLED && noGuessInput?.checked === true } : null;
+    return valid ? { ...config, noGuess: noGuessAvailable && noGuessInput?.checked === true } : null;
   }
 
   function syncSettingsForm() {
@@ -558,7 +572,7 @@ export function mountGame(root, initialState, handlers) {
     setRadio("preset", presetForConfig(state));
     setGameInputs(state);
     if (noGuessInput) {
-      noGuessInput.checked = state.noGuess === true;
+      noGuessInput.checked = state.noGuess === true && isNoGuessConfig(state);
     }
     if (displayNameInput) {
       displayNameInput.value = state.you?.name || "";
@@ -648,7 +662,13 @@ export function mountGame(root, initialState, handlers) {
       leaderboardTabs.append(button);
     }
     leaderboardModeTabs.replaceChildren();
+    if (!isNoGuessPreset(activeLeaderboardPreset) && activeLeaderboardMode === "noguess") {
+      activeLeaderboardMode = "standard";
+    }
     for (const [key, label] of LEADERBOARD_MODES) {
+      if (key === "noguess" && !isNoGuessPreset(activeLeaderboardPreset)) {
+        continue;
+      }
       const button = document.createElement("button");
       button.type = "button";
       button.dataset.mode = key;
@@ -662,6 +682,13 @@ export function mountGame(root, initialState, handlers) {
     renderLeaderboardTabs();
     leaderboardBody.replaceChildren();
     const board = leaderboardBoards?.[activeLeaderboardPreset];
+    if (activeLeaderboardMode === "noguess" && !isNoGuessPreset(activeLeaderboardPreset)) {
+      const empty = document.createElement("p");
+      empty.className = "leaderboard-empty";
+      empty.textContent = "No-guess is expert-only.";
+      leaderboardBody.append(empty);
+      return;
+    }
     const entries = Array.isArray(board) ? board : board?.[activeLeaderboardMode] || [];
     if (entries.length === 0) {
       const empty = document.createElement("p");
@@ -1171,7 +1198,7 @@ export function mountGame(root, initialState, handlers) {
     updateAll,
     setHeld(value) {
       held = value;
-      chrome.update(state, held);
+      chrome.update(state, generating || held);
     },
     setPressed(indices) {
       for (const cell of cells) {

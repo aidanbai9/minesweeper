@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { PRESETS, applyAction, createGame, generateBoard, normalizeConfig, solves, Status } from "../../engine/src/index.js";
+import { applyAction, createGame, generateBoard, isNoGuessConfig, normalizeConfig, presetKeyForConfig, tankSolves, Status } from "../../engine/src/index.js";
 import { cleanName, cleanToken, encode, errorMessage, parseJsonMessage, validateInbound } from "./protocol.js";
 
 const COLORS = ["#0000ff", "#008000", "#800080", "#008080", "#800000", "#000080", "#808000", "#ff7f00"];
@@ -12,7 +12,7 @@ const CHAT_RATE_WINDOW_MS = 5000;
 const CHAT_RATE_LIMIT = 5;
 const CHAT_COOLDOWN_MS = 5000;
 const WIN_INELIGIBLE_REASONS = Object.freeze({ ASSIST: "assist", CUSTOM: "custom" });
-const NO_GUESS_SOLVER_OPTS = Object.freeze({ maxDepth: 4, maxWidth: 6 });
+const NO_GUESS_SOLVER_OPTS = Object.freeze({ componentCap: 32 });
 
 function arraysToState(data) {
   if (!data) {
@@ -166,15 +166,6 @@ export function cleanChatText(text) {
     .trim();
 }
 
-function presetKeyForConfig(config) {
-  for (const [key, preset] of Object.entries(PRESETS)) {
-    if (preset.w === config.w && preset.h === config.h && preset.mineCount === config.mineCount) {
-      return key;
-    }
-  }
-  return "";
-}
-
 function hasWinEvent(events) {
   return events.some((event) => event.t === "WIN");
 }
@@ -199,7 +190,7 @@ export class GameRoom extends DurableObject {
     }
 
     const url = new URL(request.url);
-    const state = await this.loadOrCreateState(url);
+    const { state, noGuessRejected } = await this.loadOrCreateState(url);
     const playerId = await this.allocatePlayerId();
     const attachment = {
       playerId,
@@ -218,6 +209,9 @@ export class GameRoom extends DurableObject {
     this.ctx.acceptWebSocket(server);
     await this.markConnected();
     this.send(server, this.snapshot(state, attachment));
+    if (noGuessRejected) {
+      this.sendError(server, "noguess_unavailable", "No-guess is currently expert-only");
+    }
     this.sendChatHistory(server);
     this.broadcast({ t: "PEER_JOIN", peer: peerFromAttachment(attachment) }, server);
 
@@ -295,21 +289,34 @@ export class GameRoom extends DurableObject {
     }
 
     if (message.t === "RECONFIG") {
-      await this.newGame({ ...message.config, noGuess: state.noGuess === true }, now, {
+      await this.newGame({ ...message.config, noGuess: message.config.noGuess === true && isNoGuessConfig(message.config) }, now, {
         text: `${attachment.name} started a new ${message.config.w}\u00d7${message.config.h} game`,
         except: ws
       });
       return;
     }
 
+    if (message.action.noGuessSeed && (state.noGuess !== true || !isNoGuessConfig(state))) {
+      this.sendError(ws, "noguess_unavailable", "No-guess is currently expert-only");
+      return;
+    }
+
     if (state.noGuess === true && state.status === Status.PENDING && message.action.type === "REVEAL") {
+      if (!isNoGuessConfig(state)) {
+        this.sendError(ws, "noguess_unavailable", "No-guess is currently expert-only");
+        return;
+      }
       if (!message.action.noGuessSeed) {
         this.sendError(ws, "missing_noguess_seed", "No-guess rooms require a verified first-click seed");
         return;
       }
       const board = generateBoard(message.action.noGuessSeed, state.w, state.h, state.mineCount, message.action.idx);
-      const verified = solves(board, message.action.idx, state, NO_GUESS_SOLVER_OPTS);
-      if (!verified) {
+      if (board.counts[message.action.idx] !== 0) {
+        this.sendError(ws, "bad_noguess_seed", "No-guess seed does not solve this board");
+        return;
+      }
+      const verified = tankSolves(board, message.action.idx, NO_GUESS_SOLVER_OPTS);
+      if (!verified.solved) {
         this.sendError(ws, "bad_noguess_seed", "No-guess seed does not solve this board");
         return;
       }
@@ -373,7 +380,7 @@ export class GameRoom extends DurableObject {
   async loadOrCreateState(url) {
     const existing = await this.loadState();
     if (existing) {
-      return existing;
+      return { state: existing, noGuessRejected: false };
     }
     const params = url.searchParams;
     const config = normalizeConfig({
@@ -382,10 +389,12 @@ export class GameRoom extends DurableObject {
       h: params.get("h"),
       mineCount: params.get("m")
     });
-    const state = createGame({ ...config, noGuess: params.get("ng") === "1" || params.get("noguess") === "1" });
+    const requestedNoGuess = params.get("ng") === "1" || params.get("noguess") === "1";
+    const noGuessRejected = requestedNoGuess && !isNoGuessConfig(config);
+    const state = createGame({ ...config, noGuess: requestedNoGuess && !noGuessRejected });
     await this.saveState(state);
     await this.bumpAlarm(Date.now());
-    return state;
+    return { state, noGuessRejected };
   }
 
   async loadState() {
@@ -545,7 +554,7 @@ export class GameRoom extends DurableObject {
     const msg = {
       t: "SNAPSHOT",
       you: peerFromAttachment(attachment),
-      config: { w: state.w, h: state.h, mineCount: state.mineCount },
+      config: { seed: state.seed, w: state.w, h: state.h, mineCount: state.mineCount },
       noGuess: state.noGuess === true,
       status: state.status,
       revealed: revealedForSnapshot(state),

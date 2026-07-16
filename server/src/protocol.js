@@ -128,7 +128,12 @@ export function validateInbound(value, totalCells) {
         value: {
           v: VERSION,
           t: "RECONFIG",
-          config: { w: normalized.w, h: normalized.h, mineCount: normalized.mineCount }
+          config: {
+            w: normalized.w,
+            h: normalized.h,
+            mineCount: normalized.mineCount,
+            noGuess: config.noGuess === true
+          }
         }
       };
     } catch (error) {

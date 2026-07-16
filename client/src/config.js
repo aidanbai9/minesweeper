@@ -18,5 +18,5 @@ export const HTTP_BASE = WS_BASE.replace(/^wss:/, "https:").replace(/^ws:/, "htt
 // Flip to true to restore the existing chat UI without changing chat plumbing.
 export const CHAT_ENABLED = false;
 
-// Flip to true to restore the existing no-guess UI entry points once generation is ready.
-export const NO_GUESS_ENABLED = false;
+// Global no-guess kill-switch. Preset availability is enforced separately.
+export const NO_GUESS_ENABLED = true;

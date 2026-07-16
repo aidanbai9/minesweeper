@@ -389,9 +389,9 @@ describe("GameRoom", () => {
     const b = await connect(code);
     const snapB = await b.next((message) => message.t === "SNAPSHOT");
 
-    expect(snapA.config).toEqual({ w: 9, h: 9, mineCount: 10 });
-    expect(snapB.config).toEqual({ w: 9, h: 9, mineCount: 10 });
-    expect(snapA.config.seed).toBeUndefined();
+    expect(snapA.config).toMatchObject({ w: 9, h: 9, mineCount: 10 });
+    expect(snapB.config).toMatchObject({ w: 9, h: 9, mineCount: 10 });
+    expect(snapA.config.seed).toBe("same");
 
     a.send({ t: "ACTION", seq: 11, action: { type: "REVEAL", idx: 40 } });
     const eventA = await a.next((message) => message.t === "EVENTS");
@@ -503,14 +503,14 @@ describe("GameRoom", () => {
 
   it("verifies a valid no-guess first reveal seed and reports the room mode", async () => {
     const code = "noguesva";
-    const a = await connect(code, "?seed=ng&w=9&h=9&m=10&ng=1");
+    const a = await connect(code, "?seed=ng&w=30&h=16&m=99&ng=1");
     const snapshot = await a.next((message) => message.t === "SNAPSHOT");
     expect(snapshot.noGuess).toBe(true);
 
-    const found = generateNoGuess("client-ng", 9, 9, 10, 40, { maxDepth: 4, maxWidth: 6, maxAttempts: 5 });
+    const found = generateNoGuess("client-ng", 30, 16, 99, 240, { componentCap: 32, maxAttempts: 500 });
     expect(found.failed).toBeUndefined();
 
-    a.send({ t: "ACTION", action: { type: "REVEAL", idx: 40, noGuessSeed: found.seed } });
+    a.send({ t: "ACTION", action: { type: "REVEAL", idx: 240, noGuessSeed: found.seed } });
     const events = await a.next((message) => message.t === "EVENTS");
     const stored = await storedRoomState(code);
 
@@ -525,10 +525,10 @@ describe("GameRoom", () => {
 
   it("rejects a bogus no-guess seed without starting the game", async () => {
     const code = "noguesvb";
-    const a = await connect(code, "?seed=ng&w=9&h=9&m=10&ng=1");
+    const a = await connect(code, "?seed=ng&w=30&h=16&m=99&ng=1");
     await a.next((message) => message.t === "SNAPSHOT");
 
-    a.send({ t: "ACTION", action: { type: "REVEAL", idx: 40, noGuessSeed: "bad-8" } });
+    a.send({ t: "ACTION", action: { type: "REVEAL", idx: 240, noGuessSeed: "bad-0" } });
     const error = await a.next((message) => message.t === "ERROR");
     const stored = await storedRoomState(code);
 
@@ -536,6 +536,26 @@ describe("GameRoom", () => {
     expect(stored.status).toBe(Status.PENDING);
     expect(stored.board).toBeNull();
     expect(a.history.some(frameHasMines)).toBe(false);
+
+    a.close();
+  });
+
+  it("rejects no-guess for non-expert configs", async () => {
+    const code = "noguesvd";
+    const a = await connect(code, "?seed=ng&w=9&h=9&m=10&ng=1");
+    const snapshot = await a.next((message) => message.t === "SNAPSHOT");
+    const roomError = await a.next((message) => message.t === "ERROR");
+
+    expect(snapshot.noGuess).toBe(false);
+    expect(roomError.code).toBe("noguess_unavailable");
+
+    a.send({ t: "ACTION", action: { type: "REVEAL", idx: 40, noGuessSeed: "forced" } });
+    const actionError = await a.next((message) => message.t === "ERROR");
+    const stored = await storedRoomState(code);
+
+    expect(actionError.code).toBe("noguess_unavailable");
+    expect(stored.status).toBe(Status.PENDING);
+    expect(stored.board).toBeNull();
 
     a.close();
   });
@@ -574,8 +594,8 @@ describe("GameRoom", () => {
     const snapB = await b.next((message) => message.t === "SNAPSHOT" && message.config.w === 16);
     const noticeB = await b.next((message) => message.t === "NOTICE");
 
-    expect(snapA.config).toEqual({ w: 16, h: 16, mineCount: 40 });
-    expect(snapB.config).toEqual({ w: 16, h: 16, mineCount: 40 });
+    expect(snapA.config).toMatchObject({ w: 16, h: 16, mineCount: 40 });
+    expect(snapB.config).toMatchObject({ w: 16, h: 16, mineCount: 40 });
     expect(snapA.status).toBe(Status.PENDING);
     expect(snapB.status).toBe(Status.PENDING);
     expect(snapA.mines).toBeUndefined();
@@ -588,18 +608,18 @@ describe("GameRoom", () => {
     b.close();
   });
 
-  it("keeps the no-guess room flag through reset and reconfig snapshots", async () => {
+  it("keeps no-guess through reset and turns it off when reconfigured away from expert", async () => {
     const code = "noguesvc";
-    const a = await connect(code, "?seed=ng&w=9&h=9&m=10&ng=1");
+    const a = await connect(code, "?seed=ng&w=30&h=16&m=99&ng=1");
     await a.next((message) => message.t === "SNAPSHOT");
 
     a.send({ t: "RESET" });
     const reset = await a.next((message) => message.t === "SNAPSHOT");
     expect(reset.noGuess).toBe(true);
 
-    a.send({ t: "RECONFIG", config: { w: 16, h: 16, mineCount: 40 } });
+    a.send({ t: "RECONFIG", config: { w: 16, h: 16, mineCount: 40, noGuess: true } });
     const reconfig = await a.next((message) => message.t === "SNAPSHOT" && message.config.w === 16);
-    expect(reconfig.noGuess).toBe(true);
+    expect(reconfig.noGuess).toBe(false);
 
     a.close();
   });

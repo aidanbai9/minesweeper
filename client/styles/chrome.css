@@ -777,6 +777,17 @@ textarea {
   padding: var(--button-pad-y) var(--button-pad-x);
 }
 
+.menu-checkbox.disabled,
+.game-mode-toggle.disabled {
+  opacity: 0.55;
+}
+
+.noguess-note {
+  margin: calc(4px * var(--scale)) 0 calc(10px * var(--scale));
+  color: #555555;
+  font-size: calc(12px * var(--scale));
+}
+
 .mine-range {
   margin: 0;
 }

@@ -1,4 +1,4 @@
-import { PRESETS, normalizeConfig } from "../engine/index.js";
+import { PRESETS, isNoGuessConfig, normalizeConfig } from "../engine/index.js";
 import { createLocalTransport } from "./local.js";
 import { createNetTransport } from "./net.js";
 import { setupInput } from "./input.js";
@@ -60,9 +60,10 @@ function configFromParams(params, includeSeed = false) {
   if (includeSeed) {
     base.seed = params.get("s") || params.get("seed") || randomSeed();
   }
+  const normalized = normalizeConfig(base);
   return {
-    ...normalizeConfig(base),
-    noGuess: base.noGuess,
+    ...normalized,
+    noGuess: base.noGuess && isNoGuessConfig(normalized),
     noGuessVerified: base.noGuessVerified,
     noGuessSafeIdx: Number.isInteger(base.noGuessSafeIdx) ? base.noGuessSafeIdx : -1
   };
@@ -71,20 +72,22 @@ function configFromParams(params, includeSeed = false) {
 function storedConfig() {
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null") || PRESETS.beginner;
-    return { ...normalizeConfig(raw), noGuess: NO_GUESS_ENABLED && raw.noGuess === true };
+    const normalized = normalizeConfig(raw);
+    return { ...normalized, noGuess: NO_GUESS_ENABLED && raw.noGuess === true && isNoGuessConfig(normalized) };
   } catch {
     return { ...normalizeConfig(PRESETS.beginner), noGuess: false };
   }
 }
 
 function saveConfig(config) {
+  const normalized = normalizeConfig(config);
   localStorage.setItem(
     STORAGE_KEY,
     JSON.stringify({
-      w: config.w,
-      h: config.h,
-      mineCount: config.mineCount,
-      noGuess: NO_GUESS_ENABLED && config.noGuess === true
+      w: normalized.w,
+      h: normalized.h,
+      mineCount: normalized.mineCount,
+      noGuess: NO_GUESS_ENABLED && config.noGuess === true && isNoGuessConfig(normalized)
     })
   );
 }
@@ -280,6 +283,7 @@ function renderMenu() {
                 <input name="noGuess" type="checkbox"${last.noGuess ? " checked" : ""}>
                 <span>No-guessing mode</span>
               </label>
+              <p class="noguess-note" data-noguess-note>No-guess is currently expert-only.</p>
             `
             : ""
         }
@@ -297,13 +301,33 @@ function renderMenu() {
   const h = panel.querySelector('[name="h"]');
   const m = panel.querySelector('[name="m"]');
   const noGuess = panel.querySelector('[name="noGuess"]');
+  const noGuessNote = panel.querySelector("[data-noguess-note]");
+
+  function syncNoGuessControl() {
+    if (!noGuess) {
+      return;
+    }
+    const config = normalizeConfig({ w: w.value, h: h.value, mineCount: m.value });
+    const available = NO_GUESS_ENABLED && isNoGuessConfig(config);
+    noGuess.disabled = !available;
+    noGuess.closest(".menu-checkbox")?.classList.toggle("disabled", !available);
+    if (noGuessNote) {
+      noGuessNote.hidden = available;
+    }
+    if (!available) {
+      noGuess.checked = false;
+    }
+  }
 
   function currentConfig() {
+    const normalized = normalizeConfig({ w: w.value, h: h.value, mineCount: m.value, seed: randomSeed() });
     return {
-      ...normalizeConfig({ w: w.value, h: h.value, mineCount: m.value, seed: randomSeed() }),
-      noGuess: NO_GUESS_ENABLED && noGuess?.checked === true
+      ...normalized,
+      noGuess: NO_GUESS_ENABLED && noGuess?.checked === true && isNoGuessConfig(normalized)
     };
   }
+
+  syncNoGuessControl();
 
   panel.addEventListener("click", async (event) => {
     const preset = event.target.closest("[data-preset]")?.dataset.preset;
@@ -312,7 +336,8 @@ function renderMenu() {
       w.value = config.w;
       h.value = config.h;
       m.value = config.mineCount;
-      saveConfig({ ...config, noGuess: NO_GUESS_ENABLED && noGuess?.checked === true });
+      syncNoGuessControl();
+      saveConfig({ ...config, noGuess: NO_GUESS_ENABLED && noGuess?.checked === true && isNoGuessConfig(config) });
       return;
     }
 
@@ -341,6 +366,10 @@ function renderMenu() {
       await navigator.clipboard?.writeText(location.href).catch(() => {});
     }
   });
+
+  for (const input of [w, h, m]) {
+    input.addEventListener("input", syncNoGuessControl);
+  }
 }
 
 async function fetchLeaderboard() {

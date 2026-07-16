@@ -10,6 +10,7 @@ export const PRESETS = Object.freeze({
   expert: Object.freeze({ w: 30, h: 16, mineCount: 99 }),
   zhenghua: Object.freeze({ w: 57, h: 58, mineCount: 666 })
 });
+export const NOGUESS_PRESETS = Object.freeze(["expert"]);
 
 export function clampInt(value, min, max) {
   const n = Number.parseInt(value, 10);
@@ -26,6 +27,23 @@ export function normalizeConfig(config = {}) {
   const mineCount = clampInt(config.mineCount ?? config.m ?? PRESETS.beginner.mineCount, 1, maxMines);
   const seed = String(config.seed ?? "minesweeper");
   return { seed, w, h, mineCount };
+}
+
+export function presetKeyForConfig(config = {}) {
+  for (const [key, preset] of Object.entries(PRESETS)) {
+    if (preset.w === config.w && preset.h === config.h && preset.mineCount === config.mineCount) {
+      return key;
+    }
+  }
+  return "";
+}
+
+export function isNoGuessPreset(preset) {
+  return NOGUESS_PRESETS.includes(preset);
+}
+
+export function isNoGuessConfig(config = {}) {
+  return isNoGuessPreset(presetKeyForConfig(config));
 }
 
 export function assertConfig(config) {
@@ -308,7 +326,7 @@ export function createGame(config) {
 
   return {
     ...normalized,
-    noGuess: config?.noGuess === true,
+    noGuess: config?.noGuess === true && isNoGuessConfig(normalized),
     status: Status.PENDING,
     board: null,
     revealed: new Uint8Array(total),

@@ -1,7 +1,9 @@
-import { generateBoard, neighbors, noGuessAttemptSeed, solves } from "../engine/index.js";
+import { isNoGuessConfig, neighbors } from "../engine/index.js";
 
 let nextActionSeq = 1;
-const NO_GUESS_OPTS = Object.freeze({ maxDepth: 4, maxWidth: 6, maxAttempts: 8 });
+const NO_GUESS_OPTS = Object.freeze({ componentCap: 32, maxAttempts: 500 });
+let noGuessWorker = null;
+let noGuessRequestId = 1;
 
 function cellIdxFromEvent(event) {
   const cell = event.target.closest?.(".cell");
@@ -55,18 +57,53 @@ export function setupInput(board, api, transport) {
     if (state.noGuessVerified && state.seed && state.noGuessSafeIdx === idx) {
       return { seed: state.seed, attempt: 0, layout: null };
     }
-    const baseSeed = state.seed || crypto.randomUUID();
-    const config = { w: state.w, h: state.h, mineCount: state.mineCount };
-    const maxAttempts = state.w * state.h > 1000 ? 1 : NO_GUESS_OPTS.maxAttempts;
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const seed = noGuessAttemptSeed(baseSeed, idx, attempt);
-      const layout = generateBoard(seed, state.w, state.h, state.mineCount, idx);
-      if (solves(layout, idx, config, NO_GUESS_OPTS)) {
-        return { seed, attempt, layout };
-      }
-      await new Promise((resolve) => setTimeout(resolve, 0));
+    if (!isNoGuessConfig(state)) {
+      return { failed: true, reason: "unavailable" };
     }
-    return { failed: true, reason: "no_solvable_board" };
+    const baseSeed = state.seed || crypto.randomUUID();
+    if (!noGuessWorker) {
+      noGuessWorker = new Worker(new URL("./noguess-worker.js", import.meta.url), { type: "module" });
+    }
+    const id = noGuessRequestId;
+    noGuessRequestId += 1;
+    return new Promise((resolve) => {
+      const cleanup = () => {
+        noGuessWorker?.removeEventListener("message", onMessage);
+        noGuessWorker?.removeEventListener("error", onError);
+      };
+      const onMessage = (event) => {
+        if (event.data?.id !== id) {
+          return;
+        }
+        cleanup();
+        resolve(event.data);
+      };
+      const onError = () => {
+        cleanup();
+        noGuessWorker?.terminate();
+        noGuessWorker = null;
+        resolve({ failed: true, reason: "worker_error" });
+      };
+      noGuessWorker.addEventListener("message", onMessage);
+      noGuessWorker.addEventListener("error", onError);
+      noGuessWorker.postMessage({
+        id,
+        baseSeed,
+        w: state.w,
+        h: state.h,
+        mineCount: state.mineCount,
+        safeIdx: idx,
+        maxAttempts: NO_GUESS_OPTS.maxAttempts,
+        componentCap: NO_GUESS_OPTS.componentCap
+      });
+    });
+  }
+
+  function noGuessFailureMessage(reason) {
+    if (reason === "unavailable") {
+      return "No-guess is currently expert-only.";
+    }
+    return "No no-guess board found quickly for this click. Try another first click or start a standard game.";
   }
 
   async function sendAction(action, pendingIndices = null) {
@@ -77,7 +114,7 @@ export function setupInput(board, api, transport) {
       const result = await findNoGuessSeed(state, action.idx);
       api.setGenerating(false);
       if (result.failed) {
-        api.showNotice("No no-guess board found quickly for this click. Start a standard game or use a smaller board.");
+        api.showNotice(noGuessFailureMessage(result.reason));
         return null;
       }
       payload = { ...action, noGuessSeed: result.seed };
@@ -247,5 +284,7 @@ export function setupInput(board, api, transport) {
     window.removeEventListener("mouseup", onMouseUp);
     window.removeEventListener("keydown", onKeyDown);
     window.removeEventListener("keyup", onKeyUp);
+    noGuessWorker?.terminate();
+    noGuessWorker = null;
   };
 }
