@@ -13,7 +13,9 @@ export function peerFallbackColor(playerId) {
 export function createPresence(cells, peerListEl) {
   const peers = new Map();
   const cursors = new Map();
+  const dirtyCursorCells = new Set();
   let currentYouId = null;
+  let cursorFrame = 0;
 
   function colorFor(playerId) {
     if (playerId === AUTO_FLAG || playerId === AUTO_FLAG - 1) {
@@ -47,7 +49,35 @@ export function createPresence(cells, peerListEl) {
       .join(", ");
   }
 
+  function cancelCursorRender() {
+    if (cursorFrame) {
+      cancelAnimationFrame(cursorFrame);
+      cursorFrame = 0;
+    }
+    dirtyCursorCells.clear();
+  }
+
+  function flushCursorCells() {
+    cursorFrame = 0;
+    const indices = [...dirtyCursorCells];
+    dirtyCursorCells.clear();
+    for (const idx of indices) {
+      refreshCell(idx);
+    }
+  }
+
+  function queueCursorCell(idx) {
+    if (idx < 0 || idx >= cells.length) {
+      return;
+    }
+    dirtyCursorCells.add(idx);
+    if (!cursorFrame) {
+      cursorFrame = requestAnimationFrame(flushCursorCells);
+    }
+  }
+
   function refreshAll() {
+    cancelCursorRender();
     for (let idx = 0; idx < cells.length; idx += 1) {
       refreshCell(idx);
     }
@@ -101,11 +131,18 @@ export function createPresence(cells, peerListEl) {
     },
     setCursor(playerId, idx) {
       const old = cursors.get(playerId);
-      cursors.set(playerId, idx);
-      if (old !== undefined) {
-        refreshCell(old);
+      if (old === idx) {
+        return;
       }
-      refreshCell(idx);
+      if (idx < 0) {
+        cursors.delete(playerId);
+      } else {
+        cursors.set(playerId, idx);
+      }
+      if (old !== undefined) {
+        queueCursorCell(old);
+      }
+      queueCursorCell(idx);
     },
     colorFor,
     peerCount,

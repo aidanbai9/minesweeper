@@ -1,7 +1,7 @@
 import { createChrome } from "./chrome.js";
 import { createPresence } from "./presence.js";
 import { CHAT_ENABLED, NO_GUESS_ENABLED } from "./config.js";
-import { AUTO_FLAG, PRESETS, isNoGuessConfig, isNoGuessPreset } from "../engine/index.js";
+import { AUTO_FLAG, PRESETS, applyAction, isNoGuessConfig, isNoGuessPreset } from "../engine/index.js";
 
 const STATUS = { PENDING: 0, PLAYING: 1, WON: 2, LOST: 3 };
 const CELL_SIZE_OPTIONS = ["100", "150", "200"];
@@ -78,6 +78,10 @@ function cleanName(name) {
 
 function isValidName(name) {
   return Boolean(name) && name.length <= 20;
+}
+
+function normalizedEvents(events) {
+  return JSON.stringify(Array.isArray(events) ? events : []);
 }
 
 function settingsHtml(state, prefs, options = {}) {
@@ -351,6 +355,7 @@ export function mountGame(root, initialState, handlers) {
   const pending = new Set();
   const pendingGroups = new Set();
   const dirtyCells = new Set();
+  const optimisticFrames = new Map();
 
   root.innerHTML = `
     <div class="reconnect-banner" hidden>reconnecting...</div>
@@ -1039,6 +1044,70 @@ export function mountGame(root, initialState, handlers) {
     presence.refreshAll();
   }
 
+  function connectedPlayerCount() {
+    return state.peers.size;
+  }
+
+  function isSoloMode() {
+    return handlers.online === true && state.you && connectedPlayerCount() === 1 && state.peers.has(state.you.playerId);
+  }
+
+  function visibleEngineState() {
+    return {
+      seed: state.seed,
+      w: state.w,
+      h: state.h,
+      mineCount: state.mineCount,
+      noGuess: state.noGuess === true,
+      status: state.status,
+      board: null,
+      revealed: new Uint8Array(state.revealed),
+      flags: new Uint8Array(state.flags),
+      flagCount: state.flagCount,
+      revealedCount: state.revealed.reduce((count, value) => count + (value === 1 ? 1 : 0), 0),
+      startedAt: state.startedAt || 0,
+      endedAt: state.endedAt || 0,
+      lostAt: state.lostAt ?? -1,
+      assistTainted: false,
+      contributors: []
+    };
+  }
+
+  function recordOptimisticFrame(seq, events, beforeFlags, beforeFlagCount) {
+    if (!Number.isSafeInteger(seq) || events.length === 0) {
+      return;
+    }
+    optimisticFrames.set(seq, {
+      events: normalizedEvents(events),
+      beforeFlags,
+      beforeFlagCount
+    });
+  }
+
+  function rollbackOptimisticFrame(frame, changed) {
+    state.flagCount = frame.beforeFlagCount;
+    for (const [idx, value] of frame.beforeFlags) {
+      state.flags[idx] = value;
+      changed.add(idx);
+    }
+  }
+
+  function applyFlagEvent(event, changed) {
+    if (event.idx < 0 || event.idx >= state.flags.length) {
+      return;
+    }
+    if (event.on) {
+      if (!state.flags[event.idx]) {
+        state.flagCount += 1;
+      }
+      state.flags[event.idx] = event.playerId + 1;
+    } else if (state.flags[event.idx]) {
+      state.flags[event.idx] = 0;
+      state.flagCount -= 1;
+    }
+    changed.add(event.idx);
+  }
+
   function releasePendingGroup(group) {
     clearTimeout(group.timeout);
     pendingGroups.delete(group);
@@ -1118,6 +1187,20 @@ export function mountGame(root, initialState, handlers) {
     const events = Array.isArray(frame.events) ? frame.events : [];
     const changed = new Set();
     let wonThisFrame = false;
+    const optimistic = Number.isSafeInteger(frame.seq) ? optimisticFrames.get(frame.seq) : null;
+    if (optimistic) {
+      optimisticFrames.delete(frame.seq);
+      if (optimistic.events === normalizedEvents(events)) {
+        for (const idx of clearPendingForSeq(frame.seq)) {
+          changed.add(idx);
+        }
+        if (changed.size > 0) {
+          updateCells(changed);
+        }
+        return;
+      }
+      rollbackOptimisticFrame(optimistic, changed);
+    }
     for (const idx of clearPendingForSeq(frame.seq)) {
       changed.add(idx);
     }
@@ -1132,14 +1215,7 @@ export function mountGame(root, initialState, handlers) {
           changed.add(cell.idx);
         }
       } else if (event.t === "FLAG") {
-        if (event.on) {
-          state.flags[event.idx] = event.playerId + 1;
-          state.flagCount += 1;
-        } else if (state.flags[event.idx]) {
-          state.flags[event.idx] = 0;
-          state.flagCount -= 1;
-        }
-        changed.add(event.idx);
+        applyFlagEvent(event, changed);
       } else if (event.t === "BOOM") {
         state.status = STATUS.LOST;
         state.endedAt = event.endedAt || Date.now();
@@ -1174,6 +1250,39 @@ export function mountGame(root, initialState, handlers) {
     }
   }
 
+  function applyOptimisticAction(action) {
+    if (!isSoloMode() || !Number.isSafeInteger(action?.seq) || action?.type !== "FLAG") {
+      return;
+    }
+
+    const playerId = state.you?.playerId;
+    if (!Number.isInteger(playerId)) {
+      return;
+    }
+
+    const result = applyAction(visibleEngineState(), {
+      type: action.type,
+      idx: action.idx,
+      assist: action.assist,
+      playerId,
+      playerName: state.you?.name || "",
+      now: Date.now()
+    });
+    const events = result.events.filter((event) => event.t === "FLAG");
+    if (events.length === 0) {
+      return;
+    }
+
+    const beforeFlags = new Map(events.map((event) => [event.idx, state.flags[event.idx] || 0]));
+    const beforeFlagCount = state.flagCount;
+    const changed = new Set();
+    for (const event of events) {
+      applyFlagEvent(event, changed);
+    }
+    recordOptimisticFrame(action.seq, events, beforeFlags, beforeFlagCount);
+    updateCells(changed);
+  }
+
   function showNotice(text) {
     const toast = document.createElement("div");
     toast.className = "toast";
@@ -1194,6 +1303,8 @@ export function mountGame(root, initialState, handlers) {
     cells,
     getState: () => state,
     applyEvents,
+    applyOptimisticAction,
+    isSoloMode,
     updateCell,
     updateAll,
     setHeld(value) {

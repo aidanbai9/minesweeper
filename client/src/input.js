@@ -50,7 +50,6 @@ function actionForCell(state, idx, button) {
 export function setupInput(board, api, transport) {
   let held = null;
   let hovered = -1;
-  let lastCursorAt = 0;
   let spaceHeld = false;
 
   async function findNoGuessSeed(state, idx) {
@@ -124,7 +123,9 @@ export function setupInput(board, api, transport) {
     if (pendingIndices) {
       api.setPending(pendingIndices, seq);
     }
-    transport.send({ ...payload, seq, assist: api.getAssist() });
+    const outgoing = { ...payload, seq, assist: api.getAssist() };
+    api.applyOptimisticAction?.(outgoing);
+    transport.send(outgoing);
     return seq;
   }
 
@@ -142,11 +143,7 @@ export function setupInput(board, api, transport) {
   }
 
   function sendCursor(idx, force = false) {
-    const now = performance.now();
-    if (force || now - lastCursorAt >= 100) {
-      lastCursorAt = now;
-      transport.send({ type: "CURSOR", idx });
-    }
+    transport.send({ type: "CURSOR", idx, force });
   }
 
   function onMouseMove(event) {

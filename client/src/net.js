@@ -1,5 +1,7 @@
 import { WS_BASE } from "./config.js";
 
+const CURSOR_SEND_INTERVAL_MS = 100;
+
 function makeEmitter() {
   const listeners = new Map();
   return {
@@ -41,6 +43,10 @@ export function createNetTransport({ code, config, name = "Player", token = "" }
   let outbox = [];
   let displayName = name;
   let pendingRename = false;
+  let lastCursorIdx = null;
+  let lastCursorSentAt = -Infinity;
+  let pendingCursorIdx = null;
+  let cursorTimer = 0;
 
   function emitConnection(reconnecting) {
     emitter.emit("connection", { reconnecting });
@@ -52,6 +58,66 @@ export function createNetTransport({ code, config, name = "Player", token = "" }
       return true;
     }
     return false;
+  }
+
+  function clearPendingCursor() {
+    if (cursorTimer) {
+      clearTimeout(cursorTimer);
+      cursorTimer = 0;
+    }
+    pendingCursorIdx = null;
+  }
+
+  function sendCursorNow(idx) {
+    if (sendRaw({ t: "CURSOR", idx })) {
+      lastCursorIdx = idx;
+      lastCursorSentAt = performance.now();
+      return true;
+    }
+    return false;
+  }
+
+  function flushCursor() {
+    cursorTimer = 0;
+    if (pendingCursorIdx === null) {
+      return;
+    }
+    const idx = pendingCursorIdx;
+    pendingCursorIdx = null;
+    if (idx !== lastCursorIdx) {
+      sendCursorNow(idx);
+    }
+  }
+
+  function sendCursor(idx, force = false) {
+    if (pendingCursorIdx !== null && idx === pendingCursorIdx) {
+      return;
+    }
+    if (pendingCursorIdx !== null && idx === lastCursorIdx) {
+      clearPendingCursor();
+      return;
+    }
+    if (pendingCursorIdx === null && idx === lastCursorIdx) {
+      return;
+    }
+    if (force) {
+      clearPendingCursor();
+      sendCursorNow(idx);
+      return;
+    }
+
+    const now = performance.now();
+    const delay = CURSOR_SEND_INTERVAL_MS - (now - lastCursorSentAt);
+    if (delay <= 0) {
+      clearPendingCursor();
+      sendCursorNow(idx);
+      return;
+    }
+
+    pendingCursorIdx = idx;
+    if (!cursorTimer) {
+      cursorTimer = setTimeout(flushCursor, delay);
+    }
   }
 
   function open() {
@@ -121,6 +187,7 @@ export function createNetTransport({ code, config, name = "Player", token = "" }
     if (closed) {
       return;
     }
+    clearPendingCursor();
     emitConnection(true);
     clearTimeout(reconnectTimer);
     const delay = Math.min(30000, 500 * 2 ** attempt);
@@ -135,7 +202,7 @@ export function createNetTransport({ code, config, name = "Player", token = "" }
     },
     send(action) {
       if (action.type === "CURSOR") {
-        sendRaw({ t: "CURSOR", idx: action.idx });
+        sendCursor(action.idx, action.force === true);
         return;
       }
       const payload = { type: action.type, idx: action.idx };
@@ -171,6 +238,7 @@ export function createNetTransport({ code, config, name = "Player", token = "" }
     close() {
       closed = true;
       clearTimeout(reconnectTimer);
+      clearPendingCursor();
       if (ws) {
         ws.close(1000, "closed");
       }

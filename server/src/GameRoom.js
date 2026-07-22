@@ -1,11 +1,13 @@
 import { DurableObject } from "cloudflare:workers";
 import { applyAction, createGame, generateBoard, isNoGuessConfig, normalizeConfig, presetKeyForConfig, tankSolves, Status } from "../../engine/src/index.js";
-import { cleanName, cleanToken, encode, errorMessage, parseJsonMessage, validateInbound } from "./protocol.js";
+import { VERSION, cleanName, cleanToken, encode, errorMessage, parseJsonMessage, validateInbound } from "./protocol.js";
 
 const COLORS = ["#0000ff", "#008000", "#800080", "#008080", "#800000", "#000080", "#808000", "#ff7f00"];
 const MAX_PLAYERS = 8;
 const GC_AFTER_MS = 2 * 60 * 60 * 1000;
 const RATE_LIMIT_PER_SEC = 20;
+const CURSOR_RATE_WINDOW_MS = 1000;
+const CURSOR_RATE_LIMIT = 15;
 const CHAT_HISTORY_LIMIT = 100;
 const CHAT_MAX_LENGTH = 500;
 const CHAT_RATE_WINDOW_MS = 5000;
@@ -134,6 +136,21 @@ function rateAllowed(attachment, now) {
   return true;
 }
 
+function cursorRateAllowed(attachment, now) {
+  const cursorRate = attachment.cursorRate || { windowStart: now, count: 0 };
+  if (now - cursorRate.windowStart >= CURSOR_RATE_WINDOW_MS) {
+    cursorRate.windowStart = now;
+    cursorRate.count = 0;
+  }
+  if (cursorRate.count >= CURSOR_RATE_LIMIT) {
+    attachment.cursorRate = cursorRate;
+    return false;
+  }
+  cursorRate.count += 1;
+  attachment.cursorRate = cursorRate;
+  return true;
+}
+
 function chatRateAllowed(attachment, now) {
   const chatRate = attachment.chatRate || { windowStart: now, count: 0, cooldownUntil: 0 };
   if (chatRate.cooldownUntil > now) {
@@ -198,8 +215,10 @@ export class GameRoom extends DurableObject {
       token: "",
       color: COLORS[playerId % COLORS.length],
       rate: { second: 0, count: 0 },
+      cursorRate: { windowStart: 0, count: 0 },
       chatRate: { windowStart: 0, count: 0, cooldownUntil: 0 },
-      cursor: -1
+      cursor: -1,
+      boardSize: state.w * state.h
     };
 
     const pair = new WebSocketPair();
@@ -231,6 +250,12 @@ export class GameRoom extends DurableObject {
       return;
     }
 
+    const now = Date.now();
+    if (parsed.value?.v === VERSION && parsed.value?.t === "CURSOR") {
+      this.handleCursor(ws, attachment, parsed.value, now);
+      return;
+    }
+
     const state = await this.loadState();
     if (!state) {
       this.sendError(ws, "missing_state", "Room state is missing");
@@ -258,8 +283,6 @@ export class GameRoom extends DurableObject {
       return;
     }
 
-    const now = Date.now();
-
     if (message.t === "CHAT") {
       this.handleChat(ws, attachment, message.text, now);
       return;
@@ -273,13 +296,6 @@ export class GameRoom extends DurableObject {
 
     if (message.t === "RENAME") {
       await this.renamePlayer(ws, attachment, state, message.name, now);
-      return;
-    }
-
-    if (message.t === "CURSOR") {
-      attachment.cursor = message.idx;
-      ws.serializeAttachment(attachment);
-      this.broadcast({ t: "CURSOR", playerId: attachment.playerId, idx: message.idx }, ws);
       return;
     }
 
@@ -522,6 +538,26 @@ export class GameRoom extends DurableObject {
     this.broadcast(message);
   }
 
+  handleCursor(ws, attachment, message, now) {
+    if (!cursorRateAllowed(attachment, now)) {
+      ws.serializeAttachment(attachment);
+      return;
+    }
+    const boardSize = Number.isInteger(attachment.boardSize) ? attachment.boardSize : 0;
+    if (!Number.isInteger(message.idx) || message.idx < -1 || message.idx >= boardSize) {
+      ws.serializeAttachment(attachment);
+      this.sendError(ws, "bad_idx", "Cursor index is outside the board");
+      return;
+    }
+
+    const old = attachment.cursor;
+    attachment.cursor = message.idx;
+    ws.serializeAttachment(attachment);
+    if (old !== message.idx) {
+      this.broadcast({ t: "CURSOR", playerId: attachment.playerId, idx: message.idx }, ws);
+    }
+  }
+
   chatHistory() {
     if (!Array.isArray(this.chat)) {
       this.chat = [];
@@ -574,6 +610,11 @@ export class GameRoom extends DurableObject {
     for (const ws of this.ctx.getWebSockets()) {
       const attachment = attachmentOf(ws);
       if (attachment) {
+        attachment.boardSize = state.w * state.h;
+        if (attachment.cursor >= attachment.boardSize) {
+          attachment.cursor = -1;
+        }
+        ws.serializeAttachment(attachment);
         this.send(ws, this.snapshot(state, attachment));
       }
     }

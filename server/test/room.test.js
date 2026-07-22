@@ -233,6 +233,35 @@ describe("state serialization", () => {
 });
 
 describe("GameRoom", () => {
+  describe("cursor", () => {
+    it("rate-limits cursor broadcasts without starving gameplay actions", async () => {
+      const code = "curspres";
+      const a = await connect(code, "?seed=cursor&w=9&h=9&m=10");
+      const b = await connect(code);
+      await a.next((message) => message.t === "SNAPSHOT");
+      await b.next((message) => message.t === "SNAPSHOT");
+
+      for (let idx = 0; idx < 25; idx += 1) {
+        a.send({ t: "CURSOR", idx });
+      }
+
+      const cursors = [];
+      for (let i = 0; i < 15; i += 1) {
+        cursors.push(await b.next((message) => message.t === "CURSOR"));
+      }
+
+      expect(cursors.map((message) => message.idx)).toEqual(Array.from({ length: 15 }, (_, idx) => idx));
+      expect(await b.noMessage((message) => message.t === "CURSOR")).toBe(true);
+
+      a.send({ t: "ACTION", seq: 2240, action: { type: "FLAG", idx: 0 } });
+      const events = await a.next((message) => message.t === "EVENTS" && message.seq === 2240);
+      expect(events.events).toEqual([{ t: "FLAG", idx: 0, playerId: 0, on: true }]);
+
+      a.close();
+      b.close();
+    });
+  });
+
   describe("chat", () => {
     it("broadcasts server-stamped chat to every socket in the same room", async () => {
       const code = "chat2234";
