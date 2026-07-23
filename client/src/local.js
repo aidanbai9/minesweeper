@@ -98,9 +98,9 @@ function updateHash(config) {
   history.replaceState(null, "", `${location.pathname}${location.search}#${params.toString()}`);
 }
 
-export function createLocalTransport(config) {
+export function createLocalTransport(config, options = {}) {
   const emitter = makeEmitter();
-  const you = { playerId: 0, name: "You", color: peerFallbackColor(0) };
+  const you = { playerId: 0, name: options.name || "You", color: peerFallbackColor(0) };
   let gameConfig = {
     ...normalizeConfig(config),
     noGuess: config?.noGuess === true && isNoGuessConfig(config),

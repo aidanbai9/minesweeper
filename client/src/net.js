@@ -26,6 +26,9 @@ function buildRoomUrl(code, config, includeConfig) {
     url.searchParams.set("w", config.w);
     url.searchParams.set("h", config.h);
     url.searchParams.set("m", config.mineCount);
+    if (config.ranked === false) {
+      url.searchParams.set("ranked", "0");
+    }
     if (config.noGuess === true) {
       url.searchParams.set("ng", "1");
     }

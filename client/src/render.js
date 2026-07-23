@@ -516,6 +516,11 @@ export function mountGame(root, initialState, handlers) {
   let activeLeaderboardPreset = presetForConfig(state) === "custom" ? "expert" : presetForConfig(state);
   let activeLeaderboardMode = NO_GUESS_ENABLED && state.noGuess === true ? "noguess" : "standard";
   let leaderboardBoards = null;
+  let destroyed = false;
+
+  function leaderboardEnabled() {
+    return handlers.online === true || typeof handlers.onWin === "function";
+  }
 
   function setRadio(name, value) {
     const input = settingsBackdrop.querySelector(`input[name="${name}"][value="${value}"]`);
@@ -618,14 +623,18 @@ export function mountGame(root, initialState, handlers) {
       return "Not ranked — outside the top 50.";
     }
     if (outcome?.t === "WIN_INELIGIBLE") {
-      return outcome.reason === "assist"
-        ? "Not ranked: assists were enabled on this shared board."
-        : "Not ranked: custom board.";
+      if (outcome.reason === "assist") {
+        return "Not ranked: assists were enabled on this board.";
+      }
+      if (outcome.reason === "unranked") {
+        return "UNRANKED: this game does not record leaderboard wins.";
+      }
+      return "Not ranked: custom board.";
     }
-    if (handlers.online && state.leaderboardPending) {
+    if (state.leaderboardPending) {
       return "Checking leaderboard...";
     }
-    return handlers.online ? "Leaderboard result unavailable." : "UNRANKED: offline games do not record leaderboard wins.";
+    return leaderboardEnabled() ? "Leaderboard result unavailable." : "UNRANKED: this game does not record leaderboard wins.";
   }
 
   function renderResult() {
@@ -1232,7 +1241,7 @@ export function mountGame(root, initialState, handlers) {
         state.endedAt = event.endedAt;
         state.mines = new Set(event.mines);
         state.flagCount = state.mineCount;
-        state.leaderboardPending = handlers.online === true;
+        state.leaderboardPending = leaderboardEnabled();
         state.winOutcome = null;
         wonThisFrame = true;
         for (const idx of event.mines) {
@@ -1247,6 +1256,26 @@ export function mountGame(root, initialState, handlers) {
     updateCells(changed);
     if (wonThisFrame) {
       showResult();
+      if (typeof handlers.onWin === "function") {
+        const submittedState = { ...state };
+        void handlers
+          .onWin(submittedState)
+          .then((outcome) => {
+            if (destroyed) {
+              return;
+            }
+            state.winOutcome = outcome;
+            state.leaderboardPending = false;
+            renderResult();
+          })
+          .catch(() => {
+            if (destroyed) {
+              return;
+            }
+            state.leaderboardPending = false;
+            renderResult();
+          });
+      }
     }
   }
 
@@ -1430,6 +1459,7 @@ export function mountGame(root, initialState, handlers) {
       }
     },
     destroy() {
+      destroyed = true;
       window.removeEventListener("keydown", onWindowKeyDown);
       for (const timeout of toastTimers) {
         clearTimeout(timeout);

@@ -111,7 +111,7 @@ function persistName(name) {
   localStorage.setItem(LAST_NAME_KEY, name);
 }
 
-function promptForOnlineName() {
+function promptForPlayerName(buttonText = "Join room") {
   const activeName = cleanName(sessionStorage.getItem(SESSION_NAME_KEY));
   if (activeName) {
     return Promise.resolve(activeName);
@@ -125,7 +125,7 @@ function promptForOnlineName() {
           <form class="name-form">
             <label>Name <input name="name" type="text" autocomplete="nickname"></label>
             <p class="name-error" hidden>Enter 1-20 characters.</p>
-            <button type="submit">Join room</button>
+            <button type="submit">${buttonText}</button>
           </form>
         </section>
       </main>
@@ -154,6 +154,14 @@ function promptForOnlineName() {
     input.focus();
     input.select();
   });
+}
+
+function promptForOnlineName() {
+  return promptForPlayerName("Join room");
+}
+
+function promptForSoloName() {
+  return promptForPlayerName("Start game");
 }
 
 function normalizeThemeOptions(value) {
@@ -255,16 +263,59 @@ function setHash(params) {
   location.hash = params.toString();
 }
 
-function renderMenu() {
+function setGameHash(config, options) {
+  const hash = new URLSearchParams();
+  if (options.play === "alone") {
+    hash.set("s", randomSeed());
+  } else {
+    hash.set("r", generateRoomCode());
+  }
+  hash.set("w", config.w);
+  hash.set("h", config.h);
+  hash.set("m", config.mineCount);
+  if (options.ranked === true && options.play === "alone") {
+    hash.set("ranked", "1");
+  } else if (options.ranked === false && options.play === "with-others") {
+    hash.set("ranked", "0");
+  }
+  if (config.noGuess) {
+    hash.set("ng", "1");
+  }
+  setHash(hash);
+}
+
+function renderEntryMenu() {
   activeCleanup?.();
   activeCleanup = null;
   activeTransport?.close();
   activeTransport = null;
-  const last = storedConfig();
   root.innerHTML = `
     <main class="menu">
       <section class="menu-panel">
         <h1>Minesweeper</h1>
+        <div class="action-row">
+          <button data-entry="ranked">Ranked</button>
+          <button data-entry="unranked">Unranked</button>
+        </div>
+      </section>
+    </main>
+  `;
+
+  root.querySelector(".menu-panel").addEventListener("click", (event) => {
+    const entry = event.target.closest("[data-entry]")?.dataset.entry;
+    if (!entry) {
+      return;
+    }
+    renderConfigMenu({ ranked: entry === "ranked" });
+  });
+}
+
+function renderConfigMenu({ ranked }) {
+  const last = storedConfig();
+  root.innerHTML = `
+    <main class="menu">
+      <section class="menu-panel">
+        <h1>${ranked ? "Ranked" : "Unranked"}</h1>
         <div class="preset-row">
           <button data-preset="beginner">Beginner</button>
           <button data-preset="intermediate">Intermediate</button>
@@ -288,9 +339,8 @@ function renderMenu() {
             : ""
         }
         <div class="action-row">
-          <button data-action="solo">Play solo (ranked)</button>
-          <button data-action="offline">Play offline (UNRANKED)</button>
-          <button data-action="together">Play together</button>
+          <button data-action="start">Start game</button>
+          <button data-action="back">Back</button>
         </div>
       </section>
     </main>
@@ -345,31 +395,53 @@ function renderMenu() {
     if (!action) {
       return;
     }
+    if (action === "back") {
+      renderEntryMenu();
+      return;
+    }
 
     const config = currentConfig();
     saveConfig(config);
-    const hash = new URLSearchParams();
-    if (action === "offline") {
-      hash.set("s", randomSeed());
-    } else {
-      hash.set("r", generateRoomCode());
-    }
-    hash.set("w", config.w);
-    hash.set("h", config.h);
-    hash.set("m", config.mineCount);
-    if (config.noGuess) {
-      hash.set("ng", "1");
-    }
-    setHash(hash);
-
-    if (action === "together") {
-      await navigator.clipboard?.writeText(location.href).catch(() => {});
-    }
+    renderPlayChoice({ config, ranked });
   });
 
   for (const input of [w, h, m]) {
     input.addEventListener("input", syncNoGuessControl);
   }
+}
+
+function renderPlayChoice({ config, ranked }) {
+  root.innerHTML = `
+    <main class="menu">
+      <section class="menu-panel">
+        <h1>Start game</h1>
+        <p class="noguess-note">Play alone runs entirely on this device. You cannot invite others into that game; start a new game to play together.</p>
+        <div class="action-row">
+          <button data-play="alone">Play alone</button>
+          <button data-play="with-others">Play with others</button>
+          <button data-play="back">Back</button>
+        </div>
+      </section>
+    </main>
+  `;
+
+  root.querySelector(".menu-panel").addEventListener("click", async (event) => {
+    const play = event.target.closest("[data-play]")?.dataset.play;
+    if (!play) {
+      return;
+    }
+    if (play === "back") {
+      renderConfigMenu({ ranked });
+      return;
+    }
+    if (play === "alone" && ranked) {
+      await promptForSoloName();
+    }
+    setGameHash(config, { ranked, play });
+    if (play === "with-others") {
+      await navigator.clipboard?.writeText(location.href).catch(() => {});
+    }
+  });
 }
 
 async function fetchLeaderboard() {
@@ -378,6 +450,31 @@ async function fetchLeaderboard() {
     throw new Error("Leaderboard request failed");
   }
   return response.json();
+}
+
+async function submitSoloWin(state, { name, token }) {
+  const timeMs = Math.trunc((state.endedAt || Date.now()) - (state.startedAt || state.endedAt || Date.now()));
+  const response = await fetch(`${HTTP_BASE}/leaderboard/submit`, {
+    method: "POST",
+    mode: "cors",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      preset: "",
+      mode: state.noGuess === true ? "noguess" : "standard",
+      timeMs,
+      name,
+      token,
+      assistUsed: Boolean(state.assistTainted),
+      w: state.w,
+      h: state.h,
+      mineCount: state.mineCount
+    })
+  });
+  const body = await response.json().catch(() => ({}));
+  if (response.ok) {
+    return { t: "WIN_RECORDED", ranked: body.ranked === true, rank: body.rank, reason: body.reason, cap: body.cap };
+  }
+  return { t: "WIN_INELIGIBLE", reason: body.reason || body.error || "custom" };
 }
 
 function bootTransport(transport, options = {}) {
@@ -419,7 +516,13 @@ function bootTransport(transport, options = {}) {
       },
       onChatSend(text) {
         transport.sendChat?.(text);
-      }
+      },
+      onWin: options.onWin
+        ? (state) => options.onWin(state, {
+            name: cleanName(sessionStorage.getItem(SESSION_NAME_KEY)) || options.name || "Player",
+            token: sessionToken
+          })
+        : null
     });
     detachInput = setupInput(api.board, api, transport);
   }
@@ -477,7 +580,16 @@ async function bootFromHash() {
   if (params.has("s")) {
     const config = configFromParams(params, true);
     saveConfig(config);
-    bootTransport(createLocalTransport(config), { online: false });
+    const ranked = params.get("ranked") === "1";
+    const name = ranked ? await promptForSoloName() : cleanName(sessionStorage.getItem(SESSION_NAME_KEY)) || "You";
+    if (token !== bootToken) {
+      return;
+    }
+    bootTransport(createLocalTransport(config, { name }), {
+      online: false,
+      name,
+      onWin: ranked ? submitSoloWin : null
+    });
     return;
   }
 
@@ -485,6 +597,7 @@ async function bootFromHash() {
     const code = params.get("r");
     const config = params.has("w") || params.has("h") || params.has("m") ? configFromParams(params, false) : null;
     if (config) {
+      config.ranked = params.get("ranked") === "0" ? false : true;
       saveConfig(config);
     }
     const name = await promptForOnlineName();
@@ -497,7 +610,7 @@ async function bootFromHash() {
     return;
   }
 
-  renderMenu();
+  renderEntryMenu();
 }
 
 window.addEventListener("hashchange", () => {

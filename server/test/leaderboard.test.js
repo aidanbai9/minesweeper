@@ -36,6 +36,30 @@ async function putStoredValue(key, value) {
   });
 }
 
+async function submitWin(overrides = {}) {
+  return SELF.fetch(
+    new Request("https://mines.test/leaderboard/submit", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "CF-Connecting-IP": overrides.ip || "203.0.113.10"
+      },
+      body: JSON.stringify({
+        preset: "ignored-client-label",
+        mode: "standard",
+        timeMs: 1234,
+        name: "Ada",
+        token: "tok-submit",
+        assistUsed: false,
+        w: 9,
+        h: 9,
+        mineCount: 10,
+        ...overrides
+      })
+    })
+  );
+}
+
 describe("Leaderboard", () => {
   it("migrates legacy standard entries into modern storage with de-dupe, caps, truncation, and legacy delete", async () => {
     const lb = leaderboard();
@@ -318,5 +342,107 @@ describe("Leaderboard", () => {
 
     expect(response.status).toBe(404);
     expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+  });
+
+  it("POST /leaderboard/submit records a valid preset win and returns the rank", async () => {
+    const response = await submitWin({ preset: "expert", token: "tok-http-valid" });
+    const body = await response.json();
+    const entries = await storedEntries("beginner");
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(body).toEqual({ ranked: true, rank: 1 });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      preset: "beginner",
+      mode: "standard",
+      timeMs: 1234,
+      contributors: [{ name: "Ada", token: "tok-http-valid" }]
+    });
+  });
+
+  it("POST /leaderboard/submit rejects non-preset dimensions without recording", async () => {
+    const response = await submitWin({ token: "tok-http-custom", w: 10, h: 10, mineCount: 10 });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "bad_preset", reason: "custom" });
+    expect(await storedEntries("beginner")).toEqual([]);
+  });
+
+  it("POST /leaderboard/submit rejects no-guess submissions for non-expert presets", async () => {
+    const response = await submitWin({ token: "tok-http-bad-ng", mode: "noguess" });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "bad_mode" });
+    expect(await storedEntries("beginner")).toEqual([]);
+  });
+
+  it("POST /leaderboard/submit rejects assisted games without recording", async () => {
+    const response = await submitWin({ token: "tok-http-assist", assistUsed: true });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "assist_used", reason: "assist" });
+    expect(await storedEntries("beginner")).toEqual([]);
+  });
+
+  it("POST /leaderboard/submit rejects absurd times without recording", async () => {
+    const responses = [];
+    responses.push(await submitWin({ token: "tok-http-time-0", timeMs: 0 }));
+    responses.push(await submitWin({ token: "tok-http-time-neg", timeMs: -1 }));
+    responses.push(await submitWin({ token: "tok-http-time-long", timeMs: 24 * 60 * 60 * 1000 + 1 }));
+
+    expect(responses.map((response) => response.status)).toEqual([400, 400, 400]);
+    for (const response of responses) {
+      expect(await response.json()).toMatchObject({ error: "bad_time" });
+    }
+    expect(await storedEntries("beginner")).toEqual([]);
+  });
+
+  it("POST /leaderboard/submit rejects invalid names without recording", async () => {
+    const response = await submitWin({ token: "tok-http-bad-name", name: "\u0000\u0007   " });
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "bad_name" });
+    expect(await storedEntries("beginner")).toEqual([]);
+  });
+
+  it("POST /leaderboard/submit rate-limits rapid repeated submissions", async () => {
+    const responses = [];
+    for (let i = 0; i < 10; i += 1) {
+      responses.push(await submitWin({ token: "tok-http-rate", timeMs: 1000 + i, ip: "203.0.113.20" }));
+    }
+
+    expect(responses.filter((response) => response.status === 200)).toHaveLength(6);
+    expect(responses.filter((response) => response.status === 429).length).toBeGreaterThan(0);
+    expect(await storedEntries("beginner")).toHaveLength(6);
+  });
+
+  it("OPTIONS /leaderboard/submit returns CORS preflight headers", async () => {
+    const response = await SELF.fetch(
+      new Request("https://mines.test/leaderboard/submit", {
+        method: "OPTIONS",
+        headers: {
+          Origin: "https://aidanbai.github.io",
+          "Access-Control-Request-Method": "POST",
+          "Access-Control-Request-Headers": "content-type"
+        }
+      })
+    );
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(response.headers.get("Access-Control-Allow-Methods")).toContain("POST");
+    expect(response.headers.get("Access-Control-Allow-Headers")).toContain("Content-Type");
+  });
+
+  it("POST /leaderboard/submit applies the per-username cap like online wins", async () => {
+    for (const timeMs of [1000, 1100, 900, 1200, 800, 1300, 700, 1400]) {
+      await submitWin({ name: "Solo Cap", token: `tok-http-cap-${timeMs}`, timeMs });
+    }
+
+    const entries = await storedEntries("beginner");
+
+    expect(entries.map((item) => item.timeMs)).toEqual([700, 800, 900, 1000, 1100, 1200]);
+    expect(entries.every((item) => item.contributors[0].name === "Solo Cap")).toBe(true);
   });
 });
