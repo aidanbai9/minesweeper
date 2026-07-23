@@ -259,13 +259,13 @@ function updatePrefs(nextPrefs) {
   applyPrefs();
 }
 
-function setHash(params) {
-  location.hash = params.toString();
+function replaceHash(params) {
+  history.replaceState(null, "", `${location.pathname}${location.search}#${params.toString()}`);
 }
 
-function setGameHash(config, options) {
+function setGameHash(config, play) {
   const hash = new URLSearchParams();
-  if (options.play === "alone") {
+  if (play === "alone") {
     hash.set("s", randomSeed());
   } else {
     hash.set("r", generateRoomCode());
@@ -273,15 +273,11 @@ function setGameHash(config, options) {
   hash.set("w", config.w);
   hash.set("h", config.h);
   hash.set("m", config.mineCount);
-  if (options.ranked === true && options.play === "alone") {
-    hash.set("ranked", "1");
-  } else if (options.ranked === false && options.play === "with-others") {
-    hash.set("ranked", "0");
-  }
   if (config.noGuess) {
     hash.set("ng", "1");
   }
-  setHash(hash);
+  replaceHash(hash);
+  void bootFromHash();
 }
 
 function renderEntryMenu() {
@@ -289,33 +285,15 @@ function renderEntryMenu() {
   activeCleanup = null;
   activeTransport?.close();
   activeTransport = null;
-  root.innerHTML = `
-    <main class="menu">
-      <section class="menu-panel">
-        <h1>Minesweeper</h1>
-        <div class="action-row">
-          <button data-entry="ranked">Ranked</button>
-          <button data-entry="unranked">Unranked</button>
-        </div>
-      </section>
-    </main>
-  `;
-
-  root.querySelector(".menu-panel").addEventListener("click", (event) => {
-    const entry = event.target.closest("[data-entry]")?.dataset.entry;
-    if (!entry) {
-      return;
-    }
-    renderConfigMenu({ ranked: entry === "ranked" });
-  });
+  renderConfigMenu();
 }
 
-function renderConfigMenu({ ranked }) {
+function renderConfigMenu() {
   const last = storedConfig();
   root.innerHTML = `
     <main class="menu">
       <section class="menu-panel">
-        <h1>${ranked ? "Ranked" : "Unranked"}</h1>
+        <h1>Minesweeper</h1>
         <div class="preset-row">
           <button data-preset="beginner">Beginner</button>
           <button data-preset="intermediate">Intermediate</button>
@@ -402,7 +380,7 @@ function renderConfigMenu({ ranked }) {
 
     const config = currentConfig();
     saveConfig(config);
-    renderPlayChoice({ config, ranked });
+    renderPlayChoice({ config });
   });
 
   for (const input of [w, h, m]) {
@@ -410,7 +388,7 @@ function renderConfigMenu({ ranked }) {
   }
 }
 
-function renderPlayChoice({ config, ranked }) {
+function renderPlayChoice({ config }) {
   root.innerHTML = `
     <main class="menu">
       <section class="menu-panel">
@@ -431,13 +409,13 @@ function renderPlayChoice({ config, ranked }) {
       return;
     }
     if (play === "back") {
-      renderConfigMenu({ ranked });
+      renderConfigMenu();
       return;
     }
-    if (play === "alone" && ranked) {
+    if (play === "alone") {
       await promptForSoloName();
     }
-    setGameHash(config, { ranked, play });
+    setGameHash(config, play);
     if (play === "with-others") {
       await navigator.clipboard?.writeText(location.href).catch(() => {});
     }
@@ -580,15 +558,14 @@ async function bootFromHash() {
   if (params.has("s")) {
     const config = configFromParams(params, true);
     saveConfig(config);
-    const ranked = params.get("ranked") === "1";
-    const name = ranked ? await promptForSoloName() : cleanName(sessionStorage.getItem(SESSION_NAME_KEY)) || "You";
+    const name = await promptForSoloName();
     if (token !== bootToken) {
       return;
     }
     bootTransport(createLocalTransport(config, { name }), {
       online: false,
       name,
-      onWin: ranked ? submitSoloWin : null
+      onWin: submitSoloWin
     });
     return;
   }
@@ -597,7 +574,6 @@ async function bootFromHash() {
     const code = params.get("r");
     const config = params.has("w") || params.has("h") || params.has("m") ? configFromParams(params, false) : null;
     if (config) {
-      config.ranked = params.get("ranked") === "0" ? false : true;
       saveConfig(config);
     }
     const name = await promptForOnlineName();

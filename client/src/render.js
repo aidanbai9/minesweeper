@@ -626,15 +626,12 @@ export function mountGame(root, initialState, handlers) {
       if (outcome.reason === "assist") {
         return "Not ranked: assists were enabled on this board.";
       }
-      if (outcome.reason === "unranked") {
-        return "UNRANKED: this game does not record leaderboard wins.";
-      }
       return "Not ranked: custom board.";
     }
     if (state.leaderboardPending) {
       return "Checking leaderboard...";
     }
-    return leaderboardEnabled() ? "Leaderboard result unavailable." : "UNRANKED: this game does not record leaderboard wins.";
+    return "Leaderboard result unavailable.";
   }
 
   function renderResult() {

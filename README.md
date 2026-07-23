@@ -62,4 +62,4 @@ Online snapshots expose only dimensions, counts for revealed cells, flags, peers
 
 Leaderboard times use the server-owned clock and board state, but solver bots driving the WebSocket are not detected; preventing that would require accounts or input-timing analysis.
 
-Offline solo intentionally uses the seed in the URL and runs the same pure engine in-tab, so it has no server anti-cheat boundary. Ranked solo times are self-reported to the shared leaderboard on an honor-system basis.
+Offline solo intentionally uses the seed in the URL and runs the same pure engine in-tab, so it has no server anti-cheat boundary. Solo times are self-reported to the shared leaderboard on an honor-system basis.

@@ -33,7 +33,6 @@ function arraysToState(data) {
     revealed: Uint8Array.from(data.revealed),
     flags: Uint8Array.from(data.flags),
     noGuess: data.noGuess === true,
-    ranked: data.ranked !== false,
     assistTainted: data.assistTainted === true,
     contributors: Array.isArray(data.contributors)
       ? data.contributors.map((contributor) => {
@@ -301,12 +300,12 @@ export class GameRoom extends DurableObject {
     }
 
     if (message.t === "RESET") {
-      await this.newGame({ w: state.w, h: state.h, mineCount: state.mineCount, noGuess: state.noGuess === true, ranked: state.ranked !== false }, now);
+      await this.newGame({ w: state.w, h: state.h, mineCount: state.mineCount, noGuess: state.noGuess === true }, now);
       return;
     }
 
     if (message.t === "RECONFIG") {
-      await this.newGame({ ...message.config, noGuess: message.config.noGuess === true && isNoGuessConfig(message.config), ranked: state.ranked !== false }, now, {
+      await this.newGame({ ...message.config, noGuess: message.config.noGuess === true && isNoGuessConfig(message.config) }, now, {
         text: `${attachment.name} started a new ${message.config.w}\u00d7${message.config.h} game`,
         except: ws
       });
@@ -409,7 +408,6 @@ export class GameRoom extends DurableObject {
     const requestedNoGuess = params.get("ng") === "1" || params.get("noguess") === "1";
     const noGuessRejected = requestedNoGuess && !isNoGuessConfig(config);
     const state = createGame({ ...config, noGuess: requestedNoGuess && !noGuessRejected });
-    state.ranked = params.get("ranked") === "0" ? false : true;
     await this.saveState(state);
     await this.bumpAlarm(Date.now());
     return { state, noGuessRejected };
@@ -429,8 +427,7 @@ export class GameRoom extends DurableObject {
       w: config.w,
       h: config.h,
       mineCount: config.mineCount,
-      noGuess: config.noGuess === true,
-      ranked: config.ranked !== false
+      noGuess: config.noGuess === true
     });
     await this.saveState(next);
     await this.bumpAlarm(now);
@@ -460,9 +457,6 @@ export class GameRoom extends DurableObject {
   async winOutcome(state) {
     if (state.status !== Status.WON) {
       return null;
-    }
-    if (state.ranked === false) {
-      return { t: "WIN_INELIGIBLE", reason: "unranked" };
     }
     if (state.assistTainted) {
       return { t: "WIN_INELIGIBLE", reason: WIN_INELIGIBLE_REASONS.ASSIST };

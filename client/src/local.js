@@ -133,7 +133,14 @@ export function createLocalTransport(config, options = {}) {
     },
     on: emitter.on,
     reset() {
+      gameConfig = {
+        ...gameConfig,
+        seed: randomSeed(),
+        noGuessVerified: false,
+        noGuessSafeIdx: -1
+      };
       state = createGame(gameConfig);
+      updateHash(gameConfig);
       emitter.emit("snapshot", snapshotFromState(state, you, gameConfig));
     },
     reconfig(config) {

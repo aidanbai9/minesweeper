@@ -653,6 +653,35 @@ describe("GameRoom", () => {
     a.close();
   });
 
+  it("uses a fresh seed on every reset", async () => {
+    const code = "resetnew";
+    const a = await connect(code, "?seed=reset-base&w=9&h=9&m=10");
+    const initial = await a.next((message) => message.t === "SNAPSHOT");
+
+    a.send({ t: "RESET" });
+    const first = await a.next((message) => message.t === "SNAPSHOT");
+    a.send({ t: "RESET" });
+    const second = await a.next((message) => message.t === "SNAPSHOT");
+
+    expect(first.config.seed).not.toBe(initial.config.seed);
+    expect(second.config.seed).not.toBe(first.config.seed);
+
+    a.close();
+  });
+
+  it("uses fresh seeds for newly created rooms without explicit seeds", async () => {
+    const first = await connect("newseeda", "?w=9&h=9&m=10");
+    const second = await connect("newseedb", "?w=9&h=9&m=10");
+
+    const firstSnapshot = await first.next((message) => message.t === "SNAPSHOT");
+    const secondSnapshot = await second.next((message) => message.t === "SNAPSHOT");
+
+    expect(firstSnapshot.config.seed).not.toBe(secondSnapshot.config.seed);
+
+    first.close();
+    second.close();
+  });
+
   it("rejects impossible reconfig values without closing the socket or changing state", async () => {
     const code = "abcde24b";
     const a = await connect(code, "?seed=badreconfig&w=9&h=9&m=10");
@@ -870,6 +899,27 @@ describe("GameRoom", () => {
 
     expect(entries).toHaveLength(1);
     expect(entries[0].contributors).toEqual([{ name: "Solo", token: "tok-solo" }]);
+
+    a.close();
+  });
+
+  it("ignores stale leaderboard opt-out room state and records an eligible preset win", async () => {
+    const code = "oldoptout";
+    const a = await connect(code, "?seed=oldoptout&w=9&h=9&m=10");
+    await a.next((message) => message.t === "SNAPSHOT");
+    await setName(a, "Legacy", "tok-legacy-optout");
+
+    const { state, lastSafe } = presetWinState({ w: 9, h: 9, mineCount: 10 });
+    state.ranked = false;
+    await replaceRoomState(code, state);
+
+    a.send({ t: "ACTION", action: { type: "REVEAL", idx: lastSafe } });
+    await a.next((message) => message.t === "EVENTS" && message.events.some((event) => event.t === "WIN"));
+    const recorded = await a.next((message) => message.t === "WIN_RECORDED");
+    const entries = await leaderboardEntries("beginner");
+
+    expect(recorded.rank).toBe(1);
+    expect(entries).toHaveLength(1);
 
     a.close();
   });
