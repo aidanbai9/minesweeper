@@ -330,6 +330,9 @@ export function stateFromSnapshot(snapshot) {
     startedAt: snapshot.startedAt,
     endedAt: snapshot.endedAt,
     lostAt: snapshot.lostAt,
+    assistTainted: snapshot.assistTainted === true,
+    leaderboardIneligibleReason:
+      typeof snapshot.leaderboardIneligibleReason === "string" ? snapshot.leaderboardIneligibleReason : "",
     mines,
     wrongFlags,
     you: snapshot.you,
@@ -625,6 +628,9 @@ export function mountGame(root, initialState, handlers) {
     if (outcome?.t === "WIN_INELIGIBLE") {
       if (outcome.reason === "assist") {
         return "Not ranked: assists were enabled on this board.";
+      }
+      if (outcome.reason === "replayed_board") {
+        return "Not ranked: this board was already started on this device.";
       }
       return "Not ranked: custom board.";
     }
@@ -1246,6 +1252,12 @@ export function mountGame(root, initialState, handlers) {
           changed.add(idx);
         }
       }
+    }
+    if (typeof frame.leaderboardIneligibleReason === "string") {
+      state.leaderboardIneligibleReason = frame.leaderboardIneligibleReason;
+    }
+    if (typeof frame.assistTainted === "boolean") {
+      state.assistTainted = frame.assistTainted;
     }
     for (const idx of clearPendingForChanged(changed)) {
       changed.add(idx);

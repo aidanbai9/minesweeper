@@ -431,6 +431,9 @@ async function fetchLeaderboard() {
 }
 
 async function submitSoloWin(state, { name, token }) {
+  if (state.leaderboardIneligibleReason) {
+    return { t: "WIN_INELIGIBLE", reason: state.leaderboardIneligibleReason };
+  }
   const timeMs = Math.trunc((state.endedAt || Date.now()) - (state.startedAt || state.endedAt || Date.now()));
   const response = await fetch(`${HTTP_BASE}/leaderboard/submit`, {
     method: "POST",

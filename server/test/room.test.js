@@ -596,6 +596,7 @@ describe("GameRoom", () => {
 
     a.send({ t: "ACTION", action: { type: "REVEAL", idx: 40 } });
     const events = await a.next((message) => message.t === "EVENTS");
+    const startedAt = events.events.find((event) => event.t === "START").startedAt;
     const opened = events.events.find((event) => event.t === "OPEN").cells.length;
     a.close();
     await delay(20);
@@ -605,7 +606,7 @@ describe("GameRoom", () => {
 
     expect(snapshot.status).toBe(1);
     expect(snapshot.revealed.length).toBe(opened);
-    expect(snapshot.startedAt).toBeGreaterThan(0);
+    expect(snapshot.startedAt).toBe(startedAt);
     expect(snapshot.mines).toBeUndefined();
 
     again.close();

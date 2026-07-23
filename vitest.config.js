@@ -14,6 +14,13 @@ export default defineConfig({
           environment: "node"
         }
       },
+      {
+        test: {
+          name: "client",
+          include: ["client/test/**/*.test.js"],
+          environment: "node"
+        }
+      },
       defineWorkersProject({
         test: {
           name: "server",
